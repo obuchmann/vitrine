@@ -40,7 +40,7 @@ code { font: 12.5px ui-monospace, Menlo, monospace; background: var(--soft); bor
           <td><a href="/p/{{.Name}}/">{{.Name}}</a></td>
           <td>v{{.Version}}</td>
           <td>{{at .ExpiresAt}}{{if .KeepFor}} <span class="pill">keep_for {{.KeepFor}}</span>{{end}}</td>
-          <td>{{if .Unread}}<span class="pill new">{{.Unread}} new</span>{{else}}0{{end}} <span class="muted">/ {{.Events}}</span></td>
+          <td>{{if .Unread}}<span class="pill new">{{.Unread}} new</span>{{else}}0 new{{end}} <span class="muted">/ {{.Events}} events</span></td>
           <td>{{.Viewers}}</td>
           <td>{{kb .Bytes}}</td>
           <td>{{range $k, $v := .Context}}<span class="pill">{{$k}}: {{$v}}</span>{{end}}</td>

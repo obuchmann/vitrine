@@ -130,7 +130,8 @@ func doctor(w io.Writer, env doctorEnv) int {
 		line(true, "server", "nothing answers at %s (vitrine mcp starts vitrine when needed)", env.baseURL)
 	}
 
-	switch st, err := env.service(); {
+	st, err := env.service()
+	switch {
 	case errors.Is(err, service.ErrUnsupported):
 		line(true, "service", "not supported on this platform")
 	case err != nil:
@@ -148,6 +149,11 @@ func doctor(w io.Writer, env doctorEnv) int {
 		line(false, "browser", "%v", err)
 	}
 
+	// The systemd service logs to the journal; a daemon started by vitrine
+	// mcp, launchd and Task Scheduler write the log file.
+	if err == nil && st.Installed && strings.HasPrefix(st.Manager, "systemd") {
+		line(true, "log", "journalctl --user -u vitrine (service)")
+	}
 	logPath := filepath.Join(env.stateDir, logFile)
 	if fi, err := os.Stat(logPath); err == nil {
 		line(true, "log", "%s (%d KB)", logPath, (fi.Size()+1023)/1024)

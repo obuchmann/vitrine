@@ -366,6 +366,9 @@ func TestAckOnlyCoversDeliveredEvents(t *testing.T) {
 	if len(all.Events) != 2 || all.Events[0].Type != "rating" || all.Events[1].Type != "view" {
 		t.Fatalf("skipped events lost: %+v", all.Events)
 	}
+	if all.Cursor != 3 {
+		t.Fatalf("cursor went back to %d, want 3", all.Cursor)
+	}
 	emit(t, s, "a/b", "comment", false)
 	if res := fetchNow(t, s, "a/b", all.Cursor); len(res.Events) != 1 || res.Events[0].Type != "comment" {
 		t.Fatalf("after acknowledging everything: %+v", res.Events)

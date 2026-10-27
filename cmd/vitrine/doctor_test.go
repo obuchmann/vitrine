@@ -60,6 +60,7 @@ func TestDoctorAllGood(t *testing.T) {
 		"server     vitrine 0.1.0 answers at http://127.0.0.1:8720",
 		"service    systemd --user: installed (/u/vitrine.service), active",
 		"browser    xdg-open",
+		"log        journalctl --user -u vitrine (service)",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in\n%s", want, out)

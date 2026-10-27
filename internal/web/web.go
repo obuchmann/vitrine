@@ -250,7 +250,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		s.writeErr(w, err)
 		return
 	}
-	s.Log.Info("published", "name", name, "version", info.Version, "bytes", len(in.HTML))
+	s.Log.Info("published", "name", name, "version", info.Version, "html_bytes", len(in.HTML))
 	writeJSON(w, http.StatusOK, s.NewPublishResult(info, warning))
 }
 

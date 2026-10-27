@@ -205,13 +205,16 @@ func (t *tools) checkVersion(ctx context.Context) string {
 // show opens a prototype in the browser the first time this session
 // publishes it. Later versions reload the open tab by themselves.
 func (t *tools) show(url, name string) string {
-	if t.Open == nil {
-		return ""
-	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.opened[name] {
 		return ""
+	}
+	if t.Open == nil {
+		// Said once per prototype, so the agent does not tell the user the
+		// page opened by itself.
+		t.opened[name] = true
+		return "not opened (--no-open). Give the user the URL."
 	}
 	if err := t.Open(url); err != nil {
 		if errors.Is(err, browser.ErrNoDesktop) {
@@ -321,7 +324,7 @@ func toEvents(evs []store.Event) []event {
 type fetchOut struct {
 	Events     []event `json:"events"`
 	Cursor     int64   `json:"cursor" jsonschema:"pass as ack once you processed these events"`
-	UnreadLeft int     `json:"unread_left" jsonschema:"unread events not in this result, including other types"`
+	UnreadLeft int     `json:"unread_left" jsonschema:"unread events not in this result, including other types; automatic view, click and input events are not counted"`
 	TimedOut   bool    `json:"timed_out,omitempty" jsonschema:"nothing arrived in time: call again"`
 	Warning    string  `json:"warning,omitempty" jsonschema:"pass it on to the user"`
 }

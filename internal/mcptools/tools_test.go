@@ -237,3 +237,13 @@ func TestInboxOverMCP(t *testing.T) {
 		t.Fatalf("get after delete: %q", errText)
 	}
 }
+
+func TestShowWithoutOpenTellsTheAgent(t *testing.T) {
+	tl := &tools{opened: map[string]bool{}}
+	if got := tl.show("http://x/p/a/b/", "a/b"); !strings.Contains(got, "not opened") {
+		t.Fatalf("first publish with --no-open: %q", got)
+	}
+	if got := tl.show("http://x/p/a/b/", "a/b"); got != "" {
+		t.Fatalf("second publish: %q", got)
+	}
+}
