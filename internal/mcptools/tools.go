@@ -324,7 +324,7 @@ func toEvents(evs []store.Event) []event {
 type fetchOut struct {
 	Events     []event `json:"events"`
 	Cursor     int64   `json:"cursor" jsonschema:"pass as ack once you processed these events"`
-	UnreadLeft int     `json:"unread_left" jsonschema:"unread events not in this result, including other types"`
+	UnreadLeft int     `json:"unread_left" jsonschema:"unread events not in this result, including other types; automatic view, click and input events are not counted"`
 	TimedOut   bool    `json:"timed_out,omitempty" jsonschema:"nothing arrived in time: call again"`
 	Warning    string  `json:"warning,omitempty" jsonschema:"pass it on to the user"`
 }

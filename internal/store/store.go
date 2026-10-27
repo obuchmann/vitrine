@@ -111,12 +111,12 @@ type Push struct {
 type Info struct {
 	Name         string            `json:"name"`
 	Version      int               `json:"version"`
-	Bytes        int               `json:"bytes"`
+	Bytes        int               `json:"bytes" jsonschema:"HTML plus stored event data"`
 	PublishedAt  time.Time         `json:"published_at"`
 	LastActivity time.Time         `json:"last_activity"`
 	ExpiresAt    time.Time         `json:"expires_at"`
 	KeepFor      string            `json:"keep_for,omitempty"`
-	Unread       int               `json:"unread"`
+	Unread       int               `json:"unread" jsonschema:"unacknowledged events the prototype reported itself; automatic view, click and input events are not counted"`
 	Events       int               `json:"events"`
 	Viewers      int               `json:"viewers"`
 	Context      map[string]string `json:"context,omitempty"`
@@ -578,7 +578,8 @@ func (s *Store) dropEventsLocked(p *prototype, n int) int {
 }
 
 // FetchResult is what Fetch hands out. Cursor is the seq of the last returned
-// event; passing it as ack to the next fetch acknowledges the batch.
+// event, or the ack it was called with if that is higher, so it never goes
+// back; passing it as ack to the next fetch acknowledges the batch.
 // UnreadLeft counts unread events a prototype reported itself that are not in
 // the batch, including those of other types.
 type FetchResult struct {
@@ -629,12 +630,12 @@ func (s *Store) Fetch(ctx context.Context, name string, types []string, ack int6
 			}
 		}
 		if len(out) > 0 {
-			res := FetchResult{Events: out, Cursor: out[len(out)-1].Seq, UnreadLeft: p.unreadLocked(returned), Warning: s.tabsWarningLocked()}
+			res := FetchResult{Events: out, Cursor: max(out[len(out)-1].Seq, min(ack, p.nextSeq)), UnreadLeft: p.unreadLocked(returned), Warning: s.tabsWarningLocked()}
 			s.mu.Unlock()
 			return res, nil
 		}
 		changed := p.changed
-		res := FetchResult{Events: []Event{}, Cursor: p.acked, UnreadLeft: p.unreadLocked(nil), TimedOut: true, Warning: s.tabsWarningLocked()}
+		res := FetchResult{Events: []Event{}, Cursor: max(p.acked, min(ack, p.nextSeq)), UnreadLeft: p.unreadLocked(nil), TimedOut: true, Warning: s.tabsWarningLocked()}
 		s.mu.Unlock()
 
 		select {
