@@ -1,11 +1,18 @@
 package main
 
 import (
+	"io"
+	"log/slog"
+	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/obuchmann/vitrine/internal/store"
 )
 
 func TestConfigureDefaultsToLoopbackWithTokenFile(t *testing.T) {
@@ -52,5 +59,56 @@ func TestConfigureLoopbackAddresses(t *testing.T) {
 		if err != nil || cfg.publicURL != "http://127.0.0.1:9000" {
 			t.Errorf("%s: %+v %v", a, cfg, err)
 		}
+	}
+}
+
+func TestServeWaitsForPort(t *testing.T) {
+	held, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := held.Addr().String()
+	defer func(d time.Duration) { portRetry = d }(portRetry)
+	portRetry = 20 * time.Millisecond
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	st, err := store.Open(store.Options{Dir: t.TempDir(), Limits: store.DefaultLimits()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := serveConfig{addrs: []string{addr}}
+	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "ok") })
+
+	if err := run(cfg, h, st, 0, false, log); err == nil || !isAddrInUse(err) {
+		t.Fatalf("without -wait-port: %v", err)
+	}
+	done := make(chan error, 1)
+	// The idle exit ends the server once the test is done.
+	go func() { done <- run(cfg, h, st, time.Second, true, log) }()
+	time.Sleep(100 * time.Millisecond)
+	select {
+	case err := <-done:
+		t.Fatalf("gave up while the port was in use: %v", err)
+	default:
+	}
+	held.Close()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		res, err := http.Get("http://" + addr + "/")
+		if err == nil {
+			res.Body.Close()
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("not listening after the port was freed: %v", err)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("server did not exit when idle")
 	}
 }
