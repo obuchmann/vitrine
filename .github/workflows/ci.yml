@@ -36,3 +36,64 @@ jobs:
           go-version-file: go.mod
       - name: go test
         run: go test -race ./...
+
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --snapshot --clean --skip=sign,sbom
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/checksums.txt
+
+  install:
+    # The install scripts against the snapshot, served like a release.
+    needs: snapshot
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - name: install.sh
+        if: runner.os != 'Windows'
+        shell: sh
+        run: |
+          python3 -m http.server 8000 --bind 127.0.0.1 --directory dist >/dev/null 2>&1 &
+          sleep 2
+          export VITRINE_DOWNLOAD_URL=http://127.0.0.1:8000 VITRINE_INSTALL_DIR="$RUNNER_TEMP/bin"
+          sh scripts/install.sh
+          sh scripts/install.sh # replaces the binary
+          "$RUNNER_TEMP/bin/vitrine" doctor
+      - name: install.ps1 (Windows PowerShell 5.1, as with irm | iex)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $server = Start-Process python -ArgumentList '-m','http.server','8000','--bind','127.0.0.1','--directory','dist' -PassThru -WindowStyle Hidden
+          Start-Sleep 2
+          $env:VITRINE_DOWNLOAD_URL = 'http://127.0.0.1:8000'
+          $env:VITRINE_INSTALL_DIR = Join-Path $env:RUNNER_TEMP 'bin'
+          Get-Content scripts/install.ps1 -Raw | Invoke-Expression
+          Get-Content scripts/install.ps1 -Raw | Invoke-Expression # replaces the binary
+          & (Join-Path $env:VITRINE_INSTALL_DIR 'vitrine.exe') doctor
+          $code = $LASTEXITCODE
+          Stop-Process $server
+          exit $code
