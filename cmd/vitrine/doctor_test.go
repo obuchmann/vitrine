@@ -27,6 +27,8 @@ func testEnv(t *testing.T) doctorEnv {
 		t.Fatal(err)
 	}
 	return doctorEnv{
+		self:     "/home/me/.local/bin/vitrine",
+		onPath:   []string{"/home/me/.local/bin/vitrine"},
 		version:  "0.1.0",
 		platform: "linux/amd64",
 		goos:     runtime.GOOS,
@@ -52,6 +54,7 @@ func TestDoctorAllGood(t *testing.T) {
 	out, n := runDoctor(env)
 	for _, want := range []string{
 		"vitrine    0.1.0 (linux/amd64, WSL2 (Ubuntu))",
+		"binary     /home/me/.local/bin/vitrine",
 		"state      " + env.stateDir,
 		"token      " + filepath.Join(env.stateDir, "auth"),
 		"server     vitrine 0.1.0 answers at http://127.0.0.1:8720",
@@ -73,15 +76,19 @@ func TestDoctorAllGood(t *testing.T) {
 func TestDoctorProblems(t *testing.T) {
 	env := testEnv(t)
 	env.health = healthy("0.0.9")
+	env.onPath = []string{`C:\Users\me\go\bin\vitrine.exe`, `C:\Users\me\AppData\Local\Programs\vitrine\vitrine.exe`}
 	env.opener = func() (string, error) { return "", errors.New("xdg-open not found: install xdg-utils") }
 	env.service = func() (service.Status, error) { return service.Status{}, errors.New("systemctl failed") }
 	if runtime.GOOS != "windows" {
 		os.Chmod(filepath.Join(env.stateDir, "auth"), 0o644)
 	}
 	out, n := runDoctor(env)
-	want := 3
+	if !strings.Contains(out, "! binary     several on PATH") {
+		t.Errorf("duplicate binaries not reported:\n%s", out)
+	}
+	want := 4
 	if runtime.GOOS != "windows" {
-		want = 4
+		want = 5
 		if !strings.Contains(out, "! token") || !strings.Contains(out, "chmod 600") {
 			t.Errorf("open token file not reported:\n%s", out)
 		}
@@ -121,6 +128,27 @@ func TestDoctorFreshMachine(t *testing.T) {
 	out, n := runDoctor(env)
 	if n != 0 || strings.Count(out, "created on first start") != 2 || !strings.Contains(out, "no desktop session") || !strings.Contains(out, "not supported") {
 		t.Fatalf("%d problems:\n%s", n, out)
+	}
+}
+
+func TestFindOnPath(t *testing.T) {
+	name := "vitrine"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	a, b, empty := t.TempDir(), t.TempDir(), t.TempDir()
+	for _, d := range []string{a, b} {
+		if err := os.WriteFile(filepath.Join(d, name), []byte("x"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	path := strings.Join([]string{empty, a, "", a, b}, string(os.PathListSeparator))
+	got := findOnPath(path, runtime.GOOS)
+	if len(got) != 2 || got[0] != filepath.Join(a, name) || got[1] != filepath.Join(b, name) {
+		t.Fatalf("got %v", got)
+	}
+	if got := findOnPath(empty, runtime.GOOS); len(got) != 0 {
+		t.Fatalf("empty dir: %v", got)
 	}
 }
 

@@ -35,7 +35,10 @@ func doctorCommand(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 	c := &client.Client{BaseURL: strings.TrimSuffix(*rawURL, "/")}
+	self, _ := os.Executable()
 	env := doctorEnv{
+		self:     self,
+		onPath:   findOnPath(os.Getenv("PATH"), runtime.GOOS),
 		version:  version,
 		platform: runtime.GOOS + "/" + runtime.GOARCH,
 		goos:     runtime.GOOS,
@@ -53,6 +56,8 @@ func doctorCommand(args []string, stdout, stderr io.Writer) error {
 }
 
 type doctorEnv struct {
+	self     string   // this binary
+	onPath   []string // every vitrine on PATH, first one first
 	version  string
 	platform string // e.g. linux/amd64
 	goos     string
@@ -81,6 +86,15 @@ func doctor(w io.Writer, env doctorEnv) int {
 		platform += ", " + env.wsl
 	}
 	line(true, "vitrine", "%s (%s)", env.version, platform)
+
+	switch len(env.onPath) {
+	case 0:
+		line(true, "binary", "%s (not on PATH: agents may not find \"vitrine mcp\")", env.self)
+	case 1:
+		line(true, "binary", "%s", env.onPath[0])
+	default:
+		line(false, "binary", "several on PATH, the first wins: %s. Remove the copies you do not use.", strings.Join(env.onPath, ", "))
+	}
 
 	if fi, err := os.Stat(env.stateDir); err == nil && fi.IsDir() {
 		line(true, "state", "%s", env.stateDir)
@@ -139,6 +153,37 @@ func doctor(w io.Writer, env doctorEnv) int {
 		line(true, "log", "%s (%d KB)", logPath, (fi.Size()+1023)/1024)
 	}
 	return problems
+}
+
+// findOnPath returns every vitrine binary on path, in PATH order, each once.
+func findOnPath(path, goos string) []string {
+	name := "vitrine"
+	if goos == "windows" {
+		name += ".exe"
+	}
+	var found []string
+	seen := map[string]bool{}
+	for _, dir := range filepath.SplitList(path) {
+		if dir == "" {
+			continue
+		}
+		p := filepath.Join(dir, name)
+		if fi, err := os.Stat(p); err != nil || fi.IsDir() {
+			continue
+		}
+		key := p
+		if r, err := filepath.EvalSymlinks(p); err == nil {
+			key = r
+		}
+		if goos == "windows" {
+			key = strings.ToLower(key)
+		}
+		if !seen[key] {
+			seen[key] = true
+			found = append(found, p)
+		}
+	}
+	return found
 }
 
 // wslInfo describes the WSL environment, or returns "" outside WSL.
