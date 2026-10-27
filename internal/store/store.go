@@ -140,10 +140,85 @@ type prototype struct {
 	events     []Event
 	eventBytes int
 	nextSeq    int64
-	acked      int64 // every event up to this seq is acknowledged
+	acked      int64          // every event up to this seq is acknowledged
+	ackedAfter map[int64]bool // events after acked that are acknowledged one by one
+	delivered  map[int64]bool // events after acked that a fetch handed out, not yet acknowledged
 
-	subs    map[chan Push]struct{}
-	changed chan struct{} // closed and replaced on every new event and on removal
+	subs    map[chan Push]bool // true for an open tab, false for an agent stream
+	changed chan struct{}      // closed and replaced on every new event and on removal
+}
+
+func (p *prototype) isAcked(seq int64) bool { return seq <= p.acked || p.ackedAfter[seq] }
+
+// ackLocked acknowledges every event up to seq that a fetch handed out and
+// reports whether anything changed. Events no fetch returned, e.g. those a
+// types filter left out, stay unread.
+func (p *prototype) ackLocked(seq int64) bool {
+	changed := false
+	for _, ev := range p.events {
+		if ev.Seq > seq {
+			break
+		}
+		if p.delivered[ev.Seq] && !p.isAcked(ev.Seq) {
+			p.ackedAfter[ev.Seq] = true
+			delete(p.delivered, ev.Seq)
+			changed = true
+		}
+	}
+	if changed {
+		p.compactAcksLocked()
+	}
+	return changed
+}
+
+// compactAcksLocked moves acked past every leading acknowledged event, so
+// ackedAfter and delivered only hold events after the oldest unread one.
+func (p *prototype) compactAcksLocked() {
+	next := p.nextSeq // all events acknowledged
+	for _, ev := range p.events {
+		if ev.Seq <= p.acked {
+			continue
+		}
+		if !p.ackedAfter[ev.Seq] {
+			next = ev.Seq - 1
+			break
+		}
+	}
+	p.acked = max(p.acked, next)
+	for seq := range p.ackedAfter {
+		if seq <= p.acked {
+			delete(p.ackedAfter, seq)
+		}
+	}
+	for seq := range p.delivered {
+		if seq <= p.acked {
+			delete(p.delivered, seq)
+		}
+	}
+}
+
+// unreadLocked counts unacknowledged events a prototype reported itself,
+// leaving out those in skip. Automatically tracked views and clicks are not
+// counted.
+func (p *prototype) unreadLocked(skip map[int64]bool) int {
+	n := 0
+	for _, ev := range p.events {
+		if !ev.Auto && !p.isAcked(ev.Seq) && !skip[ev.Seq] {
+			n++
+		}
+	}
+	return n
+}
+
+// tabs counts the open tabs.
+func (p *prototype) tabs() int {
+	n := 0
+	for _, tab := range p.subs {
+		if tab {
+			n++
+		}
+	}
+	return n
 }
 
 func (p *prototype) bytes() int { return len(p.html) + p.eventBytes }
@@ -236,7 +311,8 @@ func (s *Store) Publish(in PublishInput) (Info, string, error) {
 	if exists {
 		p = *old
 	} else {
-		p = prototype{name: in.Name, subs: map[chan Push]struct{}{}, changed: make(chan struct{}), eventToken: newToken()}
+		p = prototype{name: in.Name, subs: map[chan Push]bool{}, changed: make(chan struct{}), eventToken: newToken(),
+			ackedAfter: map[int64]bool{}, delivered: map[int64]bool{}}
 	}
 	p.html = slices.Clone(in.HTML)
 	p.version++
@@ -274,6 +350,8 @@ func (s *Store) Publish(in PublishInput) (Info, string, error) {
 
 // makeRoomLocked evicts other prototypes until grow more bytes fit: expired
 // ones first, then the longest unused without keep_for, then the rest.
+// Prototypes with unread events they reported themselves are never evicted,
+// and nothing is evicted if that would still not make enough room.
 func (s *Store) makeRoomLocked(grow int, keep string, now time.Time) error {
 	total := 0
 	for _, p := range s.protos {
@@ -283,10 +361,15 @@ func (s *Store) makeRoomLocked(grow int, keep string, now time.Time) error {
 		return nil
 	}
 	var cands []*prototype
+	freeable := 0
 	for _, p := range s.protos {
-		if p.name != keep {
+		if p.name != keep && p.unreadLocked(nil) == 0 {
 			cands = append(cands, p)
+			freeable += p.bytes()
 		}
+	}
+	if total-freeable+grow > s.limits.MaxTotalBytes {
+		return ErrStoreFull
 	}
 	sort.Slice(cands, func(i, j int) bool {
 		a, b := cands[i], cands[j]
@@ -305,9 +388,6 @@ func (s *Store) makeRoomLocked(grow int, keep string, now time.Time) error {
 		}
 		total -= p.bytes()
 		s.removeLocked(p, "evicted")
-	}
-	if total+grow > s.limits.MaxTotalBytes {
-		return ErrStoreFull
 	}
 	return nil
 }
@@ -449,7 +529,7 @@ func (s *Store) dropEventsLocked(p *prototype, n int) int {
 	}
 	drop := make(map[int64]bool, n)
 	for _, pass := range []func(Event) bool{
-		func(ev Event) bool { return ev.Seq <= p.acked },
+		func(ev Event) bool { return p.isAcked(ev.Seq) },
 		func(ev Event) bool { return ev.Auto },
 	} {
 		for _, ev := range p.events {
@@ -473,11 +553,14 @@ func (s *Store) dropEventsLocked(p *prototype, n int) int {
 		}
 	}
 	p.events = kept
+	p.compactAcksLocked()
 	return len(drop)
 }
 
 // FetchResult is what Fetch hands out. Cursor is the seq of the last returned
 // event; passing it as ack to the next fetch acknowledges the batch.
+// UnreadLeft counts unread events a prototype reported itself that are not in
+// the batch, including those of other types.
 type FetchResult struct {
 	Events     []Event `json:"events"`
 	Cursor     int64   `json:"cursor"`
@@ -486,14 +569,15 @@ type FetchResult struct {
 }
 
 // Fetch is the inbox of a prototype. ack acknowledges every event up to that
-// seq (the cursor of the previous fetch; 0 acknowledges nothing). Fetch then
-// returns every unacknowledged event whose type is in types (all if empty).
-// With no such event it waits up to wait.
+// seq that a fetch returned (the cursor of the previous fetch; 0 acknowledges
+// nothing). Fetch then returns every unacknowledged event whose type is in
+// types (all if empty). With no such event it waits up to wait.
 //
 // Only an explicit ack marks events as read. A session that dies before it
 // processed a batch does not know the cursor, so the next session gets the
-// same events again: delivered at least once, never lost. Acknowledging a
-// cursor also acknowledges skipped events of other types before it.
+// same events again: delivered at least once, never lost. Events a types
+// filter left out are not acknowledged by the cursor; they stay unread until
+// a fetch returns them.
 func (s *Store) Fetch(ctx context.Context, name string, types []string, ack int64, wait time.Duration) (FetchResult, error) {
 	deadline := time.NewTimer(wait)
 	defer deadline.Stop()
@@ -504,27 +588,32 @@ func (s *Store) Fetch(ctx context.Context, name string, types []string, ack int6
 			s.mu.Unlock()
 			return FetchResult{}, ErrUnknown
 		}
-		if acked := min(ack, p.nextSeq); acked > p.acked {
-			p.acked = acked
-			// A lost write only means the events are delivered once more.
+		save := p.ackLocked(ack)
+		var out []Event
+		returned := map[int64]bool{}
+		for _, ev := range p.events {
+			if !p.isAcked(ev.Seq) && (len(types) == 0 || slices.Contains(types, ev.Type)) {
+				out = append(out, ev)
+				returned[ev.Seq] = true
+				if !p.delivered[ev.Seq] {
+					p.delivered[ev.Seq] = true
+					save = true
+				}
+			}
+		}
+		// A lost write only means the events are delivered once more.
+		if save {
 			if err := s.writeMeta(p); err != nil {
 				s.log.Error("saving ack", "name", name, "err", err)
 			}
 		}
-		var out []Event
-		for _, ev := range p.events {
-			if ev.Seq > p.acked && (len(types) == 0 || slices.Contains(types, ev.Type)) {
-				out = append(out, ev)
-			}
-		}
 		if len(out) > 0 {
-			cursor := out[len(out)-1].Seq
-			res := FetchResult{Events: out, Cursor: cursor, UnreadLeft: countUnread(p.events, cursor)}
+			res := FetchResult{Events: out, Cursor: out[len(out)-1].Seq, UnreadLeft: p.unreadLocked(returned)}
 			s.mu.Unlock()
 			return res, nil
 		}
 		changed := p.changed
-		res := FetchResult{Events: []Event{}, Cursor: p.acked, UnreadLeft: countUnread(p.events, p.acked), TimedOut: true}
+		res := FetchResult{Events: []Event{}, Cursor: p.acked, UnreadLeft: p.unreadLocked(nil), TimedOut: true}
 		s.mu.Unlock()
 
 		select {
@@ -555,7 +644,8 @@ func (s *Store) Events(name string, types []string, since int64) ([]Event, error
 }
 
 // Message sends a message to every open tab of a prototype and returns how
-// many received it.
+// many received it. Agent streams do not count, and hub.js only keeps a tab
+// subscribed while it is visible.
 func (s *Store) Message(name, text string, data json.RawMessage) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -563,12 +653,25 @@ func (s *Store) Message(name, text string, data json.RawMessage) (int, error) {
 	if !ok {
 		return 0, ErrUnknown
 	}
-	return s.pushLocked(p, Push{Kind: "message", Data: map[string]any{"message": text, "data": data}}), nil
+	n := 0
+	push := Push{Kind: "message", Data: map[string]any{"message": text, "data": data}}
+	for ch, tab := range p.subs {
+		if !tab {
+			continue
+		}
+		select {
+		case ch <- push:
+			n++
+		default:
+		}
+	}
+	return n, nil
 }
 
 // Subscribe streams the pushes of a prototype until cancel is called or the
-// prototype is removed (the channel is then closed).
-func (s *Store) Subscribe(name string) (<-chan Push, func(), error) {
+// prototype is removed (the channel is then closed). tab is true for a page
+// open in a browser and false for an agent; only tabs count as viewers.
+func (s *Store) Subscribe(name string, tab bool) (<-chan Push, func(), error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	p, ok := s.protos[name]
@@ -576,7 +679,7 @@ func (s *Store) Subscribe(name string) (<-chan Push, func(), error) {
 		return nil, nil, ErrUnknown
 	}
 	ch := make(chan Push, 32)
-	p.subs[ch] = struct{}{}
+	p.subs[ch] = tab
 	cancel := func() {
 		s.mu.Lock()
 		defer s.mu.Unlock()
@@ -609,7 +712,7 @@ func (s *Store) removeLocked(p *prototype, reason string) {
 	for ch := range p.subs {
 		close(ch)
 	}
-	p.subs = map[chan Push]struct{}{}
+	p.subs = map[chan Push]bool{}
 	delete(s.protos, p.name)
 	if err := s.removeFiles(p.name); err != nil {
 		s.log.Error("removing files", "name", p.name, "err", err)
@@ -640,16 +743,13 @@ func (s *Store) touchLocked(p *prototype) {
 
 // pushLocked delivers to every subscriber without blocking; a subscriber that
 // does not keep up misses the push.
-func (s *Store) pushLocked(p *prototype, push Push) int {
-	n := 0
+func (s *Store) pushLocked(p *prototype, push Push) {
 	for ch := range p.subs {
 		select {
 		case ch <- push:
-			n++
 		default:
 		}
 	}
-	return n
 }
 
 func (s *Store) expiresLocked(p *prototype) time.Time {
@@ -660,24 +760,12 @@ func (s *Store) infoLocked(p *prototype) Info {
 	info := Info{
 		Name: p.name, Version: p.version, Bytes: p.bytes(),
 		PublishedAt: p.publishedAt.UTC(), LastActivity: p.lastActivity.UTC(), ExpiresAt: s.expiresLocked(p).UTC(),
-		Unread: countUnread(p.events, p.acked), Events: len(p.events), Viewers: len(p.subs), Context: cloneMap(p.context),
+		Unread: p.unreadLocked(nil), Events: len(p.events), Viewers: p.tabs(), Context: cloneMap(p.context),
 	}
 	if p.keepFor > 0 {
 		info.KeepFor = FormatDuration(p.keepFor)
 	}
 	return info
-}
-
-// countUnread counts events after seq that a prototype reported itself.
-// Automatically tracked views and clicks are not counted.
-func countUnread(events []Event, seq int64) int {
-	n := 0
-	for _, ev := range events {
-		if ev.Seq > seq && !ev.Auto {
-			n++
-		}
-	}
-	return n
 }
 
 func cloneMap(m map[string]string) map[string]string {

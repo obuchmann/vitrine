@@ -22,7 +22,6 @@ import (
 	"log/slog"
 	"mime"
 	"net/http"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -157,7 +156,7 @@ func (s *Server) writeErr(w http.ResponseWriter, err error) {
 	case errors.Is(err, store.ErrTooLarge):
 		writeJSON(w, http.StatusRequestEntityTooLarge, apiError{err.Error(), ""})
 	case errors.Is(err, store.ErrStoreFull):
-		writeJSON(w, http.StatusInsufficientStorage, apiError{"store_full", "vitrine's storage limit is reached. Delete prototypes you no longer need."})
+		writeJSON(w, http.StatusInsufficientStorage, apiError{"store_full", "vitrine's storage limit is reached. Delete prototypes you no longer need, or fetch and acknowledge their unread events."})
 	case errors.Is(err, store.ErrInboxFull):
 		writeJSON(w, http.StatusTooManyRequests, apiError{"inbox_full", "The inbox of this prototype is full of unread events. The agent has to fetch and acknowledge them first."})
 	case errors.Is(err, store.ErrInvalidName), errors.Is(err, store.ErrInvalidType), errors.Is(err, store.ErrEmptyContent):
@@ -323,14 +322,74 @@ func (s *Server) handleProtoRedirect(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, r.URL.Path+"/", http.StatusMovedPermanently)
 }
 
-var (
-	headRE    = regexp.MustCompile(`(?i)<head(\s[^>]*)?>`)
-	doctypeRE = regexp.MustCompile(`(?i)^\s*(<!--.*?-->\s*)*<!doctype[^>]*>`)
-)
+// hubPos is where hub.js goes: right after the <head> tag, or if the page
+// starts without one, after the leading comments, doctype and <html> tag. A
+// script before the doctype would switch the page to quirks mode, and one
+// before <html> would run before its data-track attribute exists. Only the
+// start of the page is scanned, so a <head> in a comment or script later on
+// does not count.
+func hubPos(html []byte) int {
+	pos := 0
+	if bytes.HasPrefix(html, []byte("\xef\xbb\xbf")) {
+		pos = 3
+	}
+	for {
+		i := pos
+		for i < len(html) && strings.IndexByte(" \t\r\n\f", html[i]) >= 0 {
+			i++
+		}
+		rest := html[i:]
+		switch {
+		case bytes.HasPrefix(rest, []byte("<!--")):
+			end := bytes.Index(rest[4:], []byte("-->"))
+			if end < 0 {
+				return pos
+			}
+			pos = i + 4 + end + 3
+		case hasTagPrefix(rest, "<!doctype"), hasTagPrefix(rest, "<html"), hasTagPrefix(rest, "<head"):
+			end := tagEnd(rest)
+			if end < 0 {
+				return pos
+			}
+			pos = i + end
+			if hasTagPrefix(rest, "<head") {
+				return pos
+			}
+		default:
+			return pos
+		}
+	}
+}
 
-// handleProto serves the HTML with hub.js injected right after <head>, or
-// after the doctype if the page has no <head> tag, so it stays in standards
-// mode.
+// hasTagPrefix reports whether b starts with the tag opening tag (lower
+// case, e.g. "<html"), in any case, followed by the end of its name.
+func hasTagPrefix(b []byte, tag string) bool {
+	if len(b) <= len(tag) || !bytes.EqualFold(b[:len(tag)], []byte(tag)) {
+		return false
+	}
+	return strings.IndexByte(" \t\r\n\f/>", b[len(tag)]) >= 0
+}
+
+// tagEnd returns the index after the '>' that closes the tag at the start of
+// b, skipping quoted attribute values, or -1.
+func tagEnd(b []byte) int {
+	var quote byte
+	for i, c := range b {
+		switch {
+		case quote != 0:
+			if c == quote {
+				quote = 0
+			}
+		case c == '"' || c == '\'':
+			quote = c
+		case c == '>':
+			return i + 1
+		}
+	}
+	return -1
+}
+
+// handleProto serves the HTML with hub.js injected at hubPos.
 func (s *Server) handleProto(w http.ResponseWriter, r *http.Request) {
 	name := pathName(r)
 	page, err := s.Store.Page(name)
@@ -345,18 +404,10 @@ func (s *Server) handleProto(w http.ResponseWriter, r *http.Request) {
 	tag := fmt.Sprintf(`<script src="/_hub/hub.js" data-name="%s" data-version="%d" data-token="%s"></script>`,
 		template.HTMLEscapeString(name), page.Version, page.EventToken)
 	var out bytes.Buffer
-	loc := headRE.FindIndex(page.HTML)
-	if loc == nil {
-		loc = doctypeRE.FindIndex(page.HTML)
-	}
-	if loc != nil {
-		out.Write(page.HTML[:loc[1]])
-		out.WriteString(tag)
-		out.Write(page.HTML[loc[1]:])
-	} else {
-		out.WriteString(tag)
-		out.Write(page.HTML)
-	}
+	pos := hubPos(page.HTML)
+	out.Write(page.HTML[:pos])
+	out.WriteString(tag)
+	out.Write(page.HTML[pos:])
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Write(out.Bytes())
@@ -502,7 +553,7 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 		s.unauthorized(w)
 		return
 	}
-	ch, cancel, err := s.Store.Subscribe(name)
+	ch, cancel, err := s.Store.Subscribe(name, isHub)
 	if err != nil {
 		s.writeErr(w, err)
 		return
@@ -518,6 +569,13 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(": vitrine\n\n"))
+	if isHub {
+		// hub.js disconnects while its tab is hidden; on reconnect it learns
+		// whether a new version was published meanwhile.
+		if info, err := s.Store.Get(name); err == nil {
+			fmt.Fprintf(w, "event: version\ndata: {\"version\":%d}\n\n", info.Version)
+		}
+	}
 	flusher.Flush()
 	tick := time.NewTicker(keepAlive)
 	defer tick.Stop()

@@ -20,6 +20,7 @@ func TestRestartKeepsPrototypesInboxAndAcks(t *testing.T) {
 	publish(t, s, "a/b") // version 2
 	first := emit(t, s, "a/b", "choice", false)
 	emit(t, s, "a/b", "comment", false)
+	fetchNow(t, s, "a/b", 0, "choice")
 	fetchNow(t, s, "a/b", first.Seq) // acknowledge the choice only
 	page, _ := s.Page("a/b")
 
@@ -42,6 +43,29 @@ func TestRestartKeepsPrototypesInboxAndAcks(t *testing.T) {
 	}
 	if ev := emit(t, r, "a/b", "next", false); ev.Seq != 3 {
 		t.Fatalf("seq after restart %d, want 3", ev.Seq)
+	}
+}
+
+func TestRestartKeepsAcksAfterSkippedEvents(t *testing.T) {
+	dir := t.TempDir()
+	c := &clock{t: time.Date(2026, 10, 26, 12, 0, 0, 0, time.UTC)}
+	s := openStore(t, dir, DefaultLimits(), c)
+	publish(t, s, "a/b")
+	emit(t, s, "a/b", "rating", false)
+	emit(t, s, "a/b", "choice", false)
+	emit(t, s, "a/b", "choice", false)
+	first := fetchNow(t, s, "a/b", 0, "choice") // delivers 2 and 3
+	fetchNow(t, s, "a/b", 2, "choice")          // acknowledges 2
+
+	// The fetch was handed out before the restart; its cursor still counts.
+	r := openStore(t, dir, DefaultLimits(), c)
+	res := fetchNow(t, r, "a/b", first.Cursor, "choice")
+	if len(res.Events) != 0 {
+		t.Fatalf("acknowledged choices delivered again: %+v", res.Events)
+	}
+	res = fetchNow(t, r, "a/b", 0)
+	if len(res.Events) != 1 || res.Events[0].Type != "rating" {
+		t.Fatalf("skipped rating after restart: %+v", res.Events)
 	}
 }
 
@@ -83,6 +107,29 @@ func TestDamagedEventLineIsSkipped(t *testing.T) {
 	r = openStore(t, dir, DefaultLimits(), c)
 	if evs, _ := r.Events("a/b", nil, 0); len(evs) != 2 || evs[1].Type != "comment" {
 		t.Fatalf("event after damaged line lost: %+v", evs)
+	}
+}
+
+func TestUnreadableRepoIsSkipped(t *testing.T) {
+	dir := t.TempDir()
+	c := &clock{t: time.Now()}
+	s := openStore(t, dir, DefaultLimits(), c)
+	publish(t, s, "a/good")
+	repo := filepath.Join(dir, "c")
+	if err := os.Mkdir(repo, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(repo, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(repo, 0o700) })
+	if _, err := os.ReadDir(repo); err == nil {
+		t.Skip("the directory is still readable (running as root or on Windows)")
+	}
+
+	r := openStore(t, dir, DefaultLimits(), c)
+	if _, err := r.Get("a/good"); err != nil {
+		t.Fatal(err)
 	}
 }
 

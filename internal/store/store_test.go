@@ -301,7 +301,7 @@ func TestUnreadEventsAreNeverDropped(t *testing.T) {
 func TestSubscribersGetPushesAndClose(t *testing.T) {
 	s, _ := newStore(t)
 	publish(t, s, "a/b")
-	ch, cancel, err := s.Subscribe("a/b")
+	ch, cancel, err := s.Subscribe("a/b", true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -340,5 +340,102 @@ func TestDurations(t *testing.T) {
 	}
 	if FormatDuration(240*time.Hour) != "10d" || FormatDuration(90*time.Minute) != "1h30m0s" {
 		t.Error("format")
+	}
+}
+
+func TestAckOnlyCoversDeliveredEvents(t *testing.T) {
+	s, _ := newStore(t)
+	publish(t, s, "a/b")
+	emit(t, s, "a/b", "rating", false)
+	emit(t, s, "a/b", "view", true)
+	emit(t, s, "a/b", "choice", false)
+
+	res := fetchNow(t, s, "a/b", 0, "choice", "comment")
+	if len(res.Events) != 1 || res.Cursor != 3 || res.UnreadLeft != 1 {
+		t.Fatalf("filtered fetch: %+v", res)
+	}
+	// The cursor of a filtered fetch must not acknowledge the rating and the
+	// view it skipped.
+	if res = fetchNow(t, s, "a/b", res.Cursor, "choice", "comment"); len(res.Events) != 0 {
+		t.Fatalf("choice delivered again: %+v", res.Events)
+	}
+	if info, _ := s.Get("a/b"); info.Unread != 1 {
+		t.Fatalf("unread %d, want 1 (the rating)", info.Unread)
+	}
+	all := fetchNow(t, s, "a/b", 3)
+	if len(all.Events) != 2 || all.Events[0].Type != "rating" || all.Events[1].Type != "view" {
+		t.Fatalf("skipped events lost: %+v", all.Events)
+	}
+	emit(t, s, "a/b", "comment", false)
+	if res := fetchNow(t, s, "a/b", all.Cursor); len(res.Events) != 1 || res.Events[0].Type != "comment" {
+		t.Fatalf("after acknowledging everything: %+v", res.Events)
+	}
+	// An event emitted after a fetch is not acknowledged by a larger ack.
+	emit(t, s, "a/b", "late", false)
+	if res := fetchNow(t, s, "a/b", 99); len(res.Events) != 1 || res.Events[0].Type != "late" {
+		t.Fatalf("undelivered event acknowledged: %+v", res.Events)
+	}
+}
+
+func TestEvictionKeepsUnreadEvents(t *testing.T) {
+	c := &clock{t: time.Date(2026, 10, 26, 12, 0, 0, 0, time.UTC)}
+	lim := DefaultLimits()
+	lim.MaxTotalBytes = 40
+	s := openStore(t, t.TempDir(), lim, c)
+	put := func(name string, n int) error {
+		_, _, err := s.Publish(PublishInput{Name: name, HTML: make([]byte, n)})
+		return err
+	}
+	if err := put("a/unread", 10); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Emit("a/unread", "choice", nil, 0, false); err != nil {
+		t.Fatal(err)
+	}
+	c.add(time.Hour)
+	if err := put("a/read", 10); err != nil {
+		t.Fatal(err)
+	}
+	c.add(time.Hour)
+	if err := put("a/new", 15); err != nil {
+		t.Fatal(err)
+	}
+	// Too large even if a/read and a/new go: nothing is evicted.
+	if err := put("a/huge", 31); !errors.Is(err, ErrStoreFull) {
+		t.Fatalf("got %v, want ErrStoreFull", err)
+	}
+	if _, err := s.Get("a/read"); err != nil {
+		t.Fatal("a/read evicted although the publish failed")
+	}
+	// a/read makes room; a/unread is older but holds an unread choice.
+	if err := put("a/next", 10); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Get("a/read"); !errors.Is(err, ErrUnknown) {
+		t.Fatal("a/read still there")
+	}
+	if _, err := s.Get("a/unread"); err != nil {
+		t.Fatal("prototype with an unread event evicted")
+	}
+}
+
+func TestMessagesCountTabsOnly(t *testing.T) {
+	s, _ := newStore(t)
+	publish(t, s, "a/b")
+	agent, cancel, err := s.Subscribe("a/b", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cancel()
+	if n, _ := s.Message("a/b", "hello", nil); n != 0 {
+		t.Fatalf("message reached %d tabs, want 0", n)
+	}
+	if info, _ := s.Get("a/b"); info.Viewers != 0 {
+		t.Fatalf("viewers %d, want 0", info.Viewers)
+	}
+	select {
+	case p := <-agent:
+		t.Fatalf("agent stream got %s", p.Kind)
+	default:
 	}
 }

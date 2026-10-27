@@ -105,10 +105,10 @@ On WSL, the service needs systemd (`[boot] systemd=true` in `/etc/wsl.conf`). Wi
 | Tool | Purpose |
 |---|---|
 | `publish_prototype` | Publish an HTML file by `path`. vitrine reads the file, so the HTML does not pass through the agent's context. Names are `<repo>/<name>`; the repo defaults to the git repository that contains the file. |
-| `wait_for_events` | Return unacknowledged events, or wait for the next one. Events stay unread until the agent passes the `cursor` back as `ack`. |
+| `wait_for_events` | Return unacknowledged events, or wait for the next one. Events stay unread until the agent passes the `cursor` back as `ack`, which acknowledges only events it received. |
 | `list_prototypes`, `get_prototype` | Find where a previous session left off. |
 | `list_events` | Every stored event, read or not. |
-| `send_to_prototype` | Show a message in every open tab. |
+| `send_to_prototype` | Show a message in every tab that shows the prototype right now. |
 | `extend_prototype`, `delete_prototype` | Keep a prototype longer than 3 days without activity, or remove it. |
 
 To keep working while people click, an agent can wait in the background with curl. The token file holds the headers, so the token is never on the command line. vitrine tells the agent the exact command for its platform:

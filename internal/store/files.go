@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 )
@@ -34,6 +35,8 @@ type meta struct {
 	LastActivity time.Time         `json:"last_activity"`
 	NextSeq      int64             `json:"next_seq"`
 	Acked        int64             `json:"acked"`
+	AckedAfter   []int64           `json:"acked_after,omitempty"` // acknowledged one by one after acked
+	Delivered    []int64           `json:"delivered,omitempty"`   // handed out by a fetch, not yet acknowledged
 	EventToken   string            `json:"event_token"`
 }
 
@@ -73,11 +76,21 @@ func (s *Store) writePrototype(p *prototype, oldHTML []byte) error {
 	return nil
 }
 
+func sortedSeqs(set map[int64]bool) []int64 {
+	out := make([]int64, 0, len(set))
+	for seq := range set {
+		out = append(out, seq)
+	}
+	slices.Sort(out)
+	return out
+}
+
 func (s *Store) writeMeta(p *prototype) error {
 	m := meta{
 		Name: p.name, Version: p.version, Context: p.context,
 		PublishedAt: p.publishedAt.UTC(), LastActivity: p.lastActivity.UTC(),
 		NextSeq: p.nextSeq, Acked: p.acked, EventToken: p.eventToken,
+		AckedAfter: sortedSeqs(p.ackedAfter), Delivered: sortedSeqs(p.delivered),
 	}
 	if p.keepFor > 0 {
 		m.KeepFor = FormatDuration(p.keepFor)
@@ -206,7 +219,8 @@ func (s *Store) load() error {
 		}
 		names, err := os.ReadDir(filepath.Join(s.dir, repo.Name()))
 		if err != nil {
-			return err
+			s.log.Warn("skipping stored repository", "repo", repo.Name(), "err", err)
+			continue
 		}
 		for _, n := range names {
 			name := repo.Name() + "/" + n.Name()
@@ -245,7 +259,14 @@ func (s *Store) loadPrototype(name string) (*prototype, error) {
 		name: name, html: html, version: m.Version, context: m.Context,
 		publishedAt: m.PublishedAt, lastActivity: m.LastActivity, savedAt: m.LastActivity,
 		eventToken: m.EventToken, nextSeq: m.NextSeq, acked: m.Acked,
-		subs: map[chan Push]struct{}{}, changed: make(chan struct{}),
+		ackedAfter: map[int64]bool{}, delivered: map[int64]bool{},
+		subs: map[chan Push]bool{}, changed: make(chan struct{}),
+	}
+	for _, seq := range m.AckedAfter {
+		p.ackedAfter[seq] = true
+	}
+	for _, seq := range m.Delivered {
+		p.delivered[seq] = true
 	}
 	if m.KeepFor != "" {
 		if p.keepFor, err = ParseDuration(m.KeepFor); err != nil {
