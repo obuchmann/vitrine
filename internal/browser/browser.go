@@ -7,11 +7,22 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"strings"
 )
 
 // ErrNoDesktop means there is no browser to open, e.g. over SSH. Callers
 // show the URL instead.
 var ErrNoDesktop = errors.New("no desktop session to open a browser in")
+
+// Opener names the program that opens URLs on this machine, or returns why
+// there is none.
+func Opener() (string, error) {
+	args, err := command(runtime.GOOS, os.Getenv, exec.LookPath, "")
+	if err != nil {
+		return "", err
+	}
+	return strings.Join(args[:len(args)-1], " "), nil
+}
 
 // Open starts the browser and does not wait for it. The browser never gets
 // the caller's stdin or stdout, which carry MCP.
@@ -32,7 +43,7 @@ func Open(url string) error {
 //
 //	Windows       rundll32 url.dll,FileProtocolHandler <url>
 //	macOS         open <url>
-//	WSL           wslview <url>, which opens the Windows browser
+//	WSL           wslview <url>, else explorer.exe <url>: the Windows browser
 //	Linux, BSD    xdg-open <url>, if a display is set
 func command(goos string, getenv func(string) string, lookPath func(string) (string, error), url string) ([]string, error) {
 	switch goos {
@@ -42,10 +53,13 @@ func command(goos string, getenv func(string) string, lookPath func(string) (str
 		return []string{"open", url}, nil
 	}
 	if getenv("WSL_DISTRO_NAME") != "" {
-		if _, err := lookPath("wslview"); err != nil {
-			return nil, errors.New("wslview not found: install wslu to open the Windows browser from WSL")
+		if _, err := lookPath("wslview"); err == nil {
+			return []string{"wslview", url}, nil
 		}
-		return []string{"wslview", url}, nil
+		if _, err := lookPath("explorer.exe"); err == nil {
+			return []string{"explorer.exe", url}, nil
+		}
+		return nil, errors.New("neither wslview nor explorer.exe found: install wslu, or enable Windows interop in WSL")
 	}
 	if getenv("DISPLAY") == "" && getenv("WAYLAND_DISPLAY") == "" {
 		return nil, ErrNoDesktop
