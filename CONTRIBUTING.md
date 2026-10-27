@@ -39,6 +39,15 @@ Tool descriptions and MCP `instructions` are the user manual for agents. When be
 - Add tests. Changes to the inbox must keep the guarantee that no event is lost before an explicit `ack`.
 - Update docs and the [CHANGELOG](CHANGELOG.md) (`Unreleased` section) for user-visible changes.
 
+## Releases
+
+Maintainers release from `main`:
+
+1. Move the `Unreleased` entries in the CHANGELOG under the new version and merge that.
+2. Tag and push: `git tag v0.1.0 && git push origin v0.1.0`.
+3. The release workflow tests, builds the archives with GoReleaser, adds SBOMs and the install scripts, and signs the checksums with cosign. It creates a **draft** release.
+4. Check the draft, then publish it. `releases/latest`, which the install scripts use, only points at published releases.
+
 ## License
 
 By contributing, you agree that your contributions are licensed under the [Apache License 2.0](LICENSE).

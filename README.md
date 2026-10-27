@@ -40,6 +40,20 @@ curl -fsSL https://github.com/obuchmann/vitrine/releases/latest/download/install
 irm https://github.com/obuchmann/vitrine/releases/latest/download/install.ps1 | iex
 ```
 
+The scripts need no root or administrator rights. They install to `~/.local/bin` or `%LOCALAPPDATA%\Programs\vitrine` and check the download against `checksums.txt`. With Go installed, `go install github.com/obuchmann/vitrine/cmd/vitrine@latest` works too.
+
+<details><summary>Verify a release with cosign</summary>
+
+The checksums are signed in the release workflow, without a long-lived key:
+
+```sh
+cosign verify-blob checksums.txt --bundle checksums.txt.sigstore.json \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp '^https://github.com/obuchmann/vitrine/\.github/workflows/release\.yml@refs/tags/v'
+sha256sum --ignore-missing -c checksums.txt
+```
+</details>
+
 Register vitrine with your agent:
 
 <details open><summary>Claude Code</summary>

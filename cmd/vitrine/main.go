@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"syscall"
 	"time"
@@ -26,6 +27,16 @@ import (
 )
 
 var version = "dev" // set with -ldflags "-X main.version=…"
+
+// go install …@v0.1.0 sets no ldflags but records the module version.
+func init() {
+	if version != "dev" {
+		return
+	}
+	if bi, ok := debug.ReadBuildInfo(); ok && bi.Main.Version != "" && bi.Main.Version != "(devel)" {
+		version = strings.TrimPrefix(bi.Main.Version, "v")
+	}
+}
 
 // DefaultPort is where agents and browsers find the local vitrine.
 const DefaultPort = "8720"
