@@ -380,3 +380,19 @@ func TestHealthIsOpen(t *testing.T) {
 		t.Fatalf("health: %d %s", code, body)
 	}
 }
+
+func TestHubIsInjectedAfterDoctypeWithoutHead(t *testing.T) {
+	e := newEnv(t)
+	for html, prefix := range map[string]string{
+		"<!DOCTYPE html><title>x</title><p>hi": "<!DOCTYPE html><script src=",
+		"<!-- c -->\n<!doctype html><p>hi":     "<!-- c -->\n<!doctype html><script src=",
+		"<p>hi</p>":                            "<script src=",
+	} {
+		if code, body, _ := e.do("POST", "/api/p/a/b", "text/html", strings.NewReader(html), agentHeaders); code != 200 {
+			t.Fatalf("upload: %d %s", code, body)
+		}
+		if _, body, _ := e.do("GET", "/p/a/b/", "", nil, nil); !strings.HasPrefix(body, prefix) {
+			t.Errorf("%q served as %q", html, body)
+		}
+	}
+}

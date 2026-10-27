@@ -157,6 +157,8 @@ func (s *Server) writeErr(w http.ResponseWriter, err error) {
 		writeJSON(w, http.StatusRequestEntityTooLarge, apiError{err.Error(), ""})
 	case errors.Is(err, store.ErrStoreFull):
 		writeJSON(w, http.StatusInsufficientStorage, apiError{"store_full", "vitrine's storage limit is reached. Delete prototypes you no longer need."})
+	case errors.Is(err, store.ErrInboxFull):
+		writeJSON(w, http.StatusTooManyRequests, apiError{"inbox_full", "The inbox of this prototype is full of unread events. The agent has to fetch and acknowledge them first."})
 	case errors.Is(err, store.ErrInvalidName), errors.Is(err, store.ErrInvalidType), errors.Is(err, store.ErrEmptyContent):
 		writeJSON(w, http.StatusBadRequest, apiError{err.Error(), ""})
 	default:
@@ -291,9 +293,14 @@ func (s *Server) handleProtoRedirect(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, r.URL.Path+"/", http.StatusMovedPermanently)
 }
 
-var headRE = regexp.MustCompile(`(?i)<head(\s[^>]*)?>`)
+var (
+	headRE    = regexp.MustCompile(`(?i)<head(\s[^>]*)?>`)
+	doctypeRE = regexp.MustCompile(`(?i)^\s*(<!--.*?-->\s*)*<!doctype[^>]*>`)
+)
 
-// handleProto serves the HTML with hub.js injected right after <head>.
+// handleProto serves the HTML with hub.js injected right after <head>, or
+// after the doctype if the page has no <head> tag, so it stays in standards
+// mode.
 func (s *Server) handleProto(w http.ResponseWriter, r *http.Request) {
 	name := pathName(r)
 	page, err := s.Store.Page(name)
@@ -308,7 +315,11 @@ func (s *Server) handleProto(w http.ResponseWriter, r *http.Request) {
 	tag := fmt.Sprintf(`<script src="/_hub/hub.js" data-name="%s" data-version="%d" data-token="%s"></script>`,
 		template.HTMLEscapeString(name), page.Version, page.EventToken)
 	var out bytes.Buffer
-	if loc := headRE.FindIndex(page.HTML); loc != nil {
+	loc := headRE.FindIndex(page.HTML)
+	if loc == nil {
+		loc = doctypeRE.FindIndex(page.HTML)
+	}
+	if loc != nil {
 		out.Write(page.HTML[:loc[1]])
 		out.WriteString(tag)
 		out.Write(page.HTML[loc[1]:])

@@ -77,6 +77,13 @@ func TestDamagedEventLineIsSkipped(t *testing.T) {
 	if err != nil || len(evs) != 1 || evs[0].Type != "choice" {
 		t.Fatalf("events %+v %v", evs, err)
 	}
+
+	// The next event must not be glued to the damaged line.
+	emit(t, r, "a/b", "comment", false)
+	r = openStore(t, dir, DefaultLimits(), c)
+	if evs, _ := r.Events("a/b", nil, 0); len(evs) != 2 || evs[1].Type != "comment" {
+		t.Fatalf("event after damaged line lost: %+v", evs)
+	}
 }
 
 func TestUnreadablePrototypeIsSkipped(t *testing.T) {
@@ -93,6 +100,43 @@ func TestUnreadablePrototypeIsSkipped(t *testing.T) {
 	}
 	if _, err := r.Get("a/bad"); !errors.Is(err, ErrUnknown) {
 		t.Fatalf("damaged prototype loaded: %v", err)
+	}
+}
+
+func TestPublishOverLeftoverDirectoryStartsEmpty(t *testing.T) {
+	dir := t.TempDir()
+	c := &clock{t: time.Now()}
+	s := openStore(t, dir, DefaultLimits(), c)
+	publish(t, s, "a/b")
+	emit(t, s, "a/b", "old", false)
+	emit(t, s, "a/b", "old", false)
+	os.WriteFile(filepath.Join(dir, "a", "b", metaFile), []byte("{"), 0o600)
+
+	r := openStore(t, dir, DefaultLimits(), c)
+	publish(t, r, "a/b")
+	if ev := emit(t, r, "a/b", "new", false); ev.Seq != 1 {
+		t.Fatalf("seq %d, want 1", ev.Seq)
+	}
+	r = openStore(t, dir, DefaultLimits(), c)
+	if evs, _ := r.Events("a/b", nil, 0); len(evs) != 1 || evs[0].Type != "new" {
+		t.Fatalf("events of the old prototype came back: %+v", evs)
+	}
+}
+
+func TestFailedRepublishKeepsPreviousHTML(t *testing.T) {
+	dir := t.TempDir()
+	s := openStore(t, dir, DefaultLimits(), &clock{t: time.Now()})
+	publish(t, s, "a/b")
+	// A directory in place of meta.json makes the metadata write fail.
+	meta := filepath.Join(dir, "a", "b", metaFile)
+	os.Remove(meta)
+	os.MkdirAll(filepath.Join(meta, "x"), 0o700)
+	if _, _, err := s.Publish(PublishInput{Name: "a/b", HTML: []byte("<p>v2</p>")}); err == nil {
+		t.Fatal("publish succeeded although meta.json cannot be written")
+	}
+	html, err := os.ReadFile(filepath.Join(dir, "a", "b", htmlFile))
+	if err != nil || string(html) != "<html><body>x</body></html>" {
+		t.Fatalf("html on disk %q %v, want version 1", html, err)
 	}
 }
 

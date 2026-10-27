@@ -19,11 +19,14 @@
   const handlers = {};
 
   function post(type, data, auto) {
+    const body = JSON.stringify({ type, data: data === undefined ? null : data, version, auto: !!auto });
     return fetch(`/api/events/${name}`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-Vitrine": "1", "X-Vitrine-Event-Token": token },
-      body: JSON.stringify({ type, data: data === undefined ? null : data, version, auto: !!auto }),
-      keepalive: true,
+      body,
+      // Browsers reject keepalive bodies over 64 KiB; only small events need
+      // to outlive the page.
+      keepalive: new Blob([body]).size < 60000,
     }).then((r) => {
       if (!r.ok) console.warn("vitrine: event not stored", type, r.status);
       return r.ok;
