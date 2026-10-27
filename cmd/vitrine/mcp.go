@@ -58,7 +58,7 @@ func mcpCommand(args []string, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	opts := mcptools.Options{Client: c, Dir: dir}
+	opts := mcptools.Options{Client: c, Dir: dir, Version: version}
 	if !*noOpen {
 		opts.Open = browser.Open
 	}
