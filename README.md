@@ -53,7 +53,7 @@ sha256sum --ignore-missing -c checksums.txt
 ```
 </details>
 
-Register vitrine with your agent:
+Register vitrine with your agent. v0.1 is tested with Claude Code; the other configurations follow each agent's MCP documentation and are not tested yet.
 
 <details open><summary>Claude Code</summary>
 

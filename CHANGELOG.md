@@ -19,8 +19,8 @@ First release: vitrine on your own machine, on Linux, Windows (including WSL2) a
 - MCP tools:
   - `publish_prototype` reads the HTML file by `path`, so it does not pass through the agent's context. The name defaults to `<git repo of the file>/<folder>`, and the first publish opens the page in the browser (`--no-open` turns this off).
   - `wait_for_events`, `list_prototypes`, `get_prototype`, `list_events`, `send_to_prototype`, `extend_prototype` and `delete_prototype`.
-- Inbox: events stay unread until an agent acknowledges them with the cursor. Prototypes, events and acknowledgements are stored as files in the per-user state directory and survive restarts.
-- `hub.js` is injected into every prototype: `hub.emit`, automatic `view` and `click` events with `data-track`, messages from the agent, and reloading on a new version. At most four visible tabs keep a live connection, so the browser's limit of six connections per host never blocks pages or events.
+- Inbox: events stay unread until an agent acknowledges them with the cursor, which covers only events it received; events a type filter left out stay unread. Prototypes, events and acknowledgements are stored as files in the per-user state directory and survive restarts.
+- `hub.js` is injected into every prototype: `hub.emit`, automatic `view`, `click` and `input` events with `data-track`, messages from the agent, and reloading on a new version. At most four visible tabs keep a live connection, so the browser's limit of six connections per host never blocks pages or events.
 - `vitrine serve` runs the server in the foreground. It provides an HTTP API for agents, including a long poll for background waiting with `curl -H @<state dir>/auth`.
 - `vitrine service install | uninstall | status`: runs vitrine at every login as a systemd `--user` unit, a launchd agent or a Task Scheduler task, without administrator rights.
 - `vitrine doctor` checks the platform and WSL, the `vitrine` binaries on PATH, the state directory and token file permissions, what answers on the port and its version, the service and the browser opener.
