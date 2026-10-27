@@ -20,8 +20,8 @@ Rules:
 - Write one self-contained HTML file (CSS, JS and images inline) and publish
   it with publish_prototype {path}. vitrine reads the file, so the HTML does
   not pass through your context.
-- Names are <repo>/<name>. repo defaults to the git repository you work in,
-  name to the file's folder. The page is at %s/p/<repo>/<name>/ and opens in
+- Names are <repo>/<name>. repo defaults to the git repository that contains
+  the file, name to the file's folder. The page is at %s/p/<repo>/<name>/ and opens in
   the user's browser on the first publish.
 - In the prototype, report what matters: hub.emit("choice", {variant: "B"}).
   vitrine injects hub.js. <html data-track="view,click"> adds automatic events.

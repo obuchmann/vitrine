@@ -11,8 +11,9 @@ import (
 )
 
 // resolveName completes the name of a prototype (docs/adr/0001-runtime-modes.md):
-// <repo>/<name> stays as it is, a bare <name> gets the repo of dir, and no
-// name at all is taken from file: prototypes/login/index.html is "login",
+// <repo>/<name> stays as it is, a bare <name> gets the repo that contains
+// file (else the repo of dir, the agent's working directory), and no name at
+// all is taken from file: prototypes/login/index.html is "login",
 // prototypes/login.html too.
 func resolveName(dir, file, name string) (string, error) {
 	if strings.Contains(name, "/") {
@@ -29,9 +30,12 @@ func resolveName(dir, file, name string) (string, error) {
 		}
 		name = slug(name)
 	}
-	root := gitRoot(dir)
+	root := gitRoot(filepath.Dir(file))
 	if root == "" {
-		return "", fmt.Errorf("%s is not in a git repository: pass name as <repo>/<name>", dir)
+		root = gitRoot(dir)
+	}
+	if root == "" {
+		return "", fmt.Errorf("neither %s nor %s is in a git repository: pass name as <repo>/<name>", file, dir)
 	}
 	full := slug(filepath.Base(root)) + "/" + name
 	if !store.ValidName(full) {
