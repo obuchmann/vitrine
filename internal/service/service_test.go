@@ -44,6 +44,7 @@ func newConfig(t *testing.T, goos string) (Config, *recorder) {
 
 func TestSystemd(t *testing.T) {
 	c, r := newConfig(t, "linux")
+	c.Exe, c.StateDir = "/home/me/.local/bin/vitrine", "/home/me/state 100%"
 	if err := Install(c); err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +52,7 @@ func TestSystemd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantExec := `ExecStart="` + c.Exe + `" "serve" "-state-dir" "` + strings.ReplaceAll(c.StateDir, "%", "%%") + `"`
+	wantExec := `ExecStart="/home/me/.local/bin/vitrine" "serve" "-state-dir" "/home/me/state 100%%"`
 	if !strings.Contains(string(unit), wantExec+"\n") || !strings.Contains(string(unit), "Restart=on-failure") {
 		t.Fatalf("unit:\n%s\nwant %s", unit, wantExec)
 	}
@@ -74,6 +75,18 @@ func TestSystemd(t *testing.T) {
 	}
 	if st, _ := Query(c); st.Installed {
 		t.Fatalf("status after uninstall: %+v", st)
+	}
+}
+
+func TestSystemdQuote(t *testing.T) {
+	for in, want := range map[string]string{
+		`/a b/c`: `"/a b/c"`,
+		`50%`:    `"50%%"`,
+		`a\b"c`:  `"a\\b\"c"`,
+	} {
+		if got := systemdQuote(in); got != want {
+			t.Errorf("systemdQuote(%q) = %s, want %s", in, got, want)
+		}
 	}
 }
 
