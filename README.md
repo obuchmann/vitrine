@@ -4,9 +4,8 @@
 
 vitrine is a small MCP server that hosts HTML prototypes. It streams what people do in them (choices, comments, clicks) back to Claude Code, Codex, opencode, GitHub Copilot or any other MCP client.
 
-> [!IMPORTANT]
-> **Status: early development.** Nothing on this page is released yet. This README describes the planned v0.1.
-> See the [roadmap](ROADMAP.md) and the design decisions in [`docs/adr/`](docs/adr/). Feedback is welcome in issues.
+> [!NOTE]
+> **Status: v0.1, early.** vitrine works on your own machine. Interfaces may still change before 1.0. See the [roadmap](ROADMAP.md) and the design decisions in [`docs/adr/`](docs/adr/). Feedback is welcome in issues.
 
 ## Why
 
@@ -28,7 +27,7 @@ v0.1 focuses on your own machine, on **Linux, Windows (incl. WSL2) and macOS**.
 
 Both modes use the same agent configuration. `vitrine mcp` attaches to a running service or starts its own. Shared and team servers are on the [roadmap](ROADMAP.md).
 
-## Quick start (planned)
+## Quick start
 
 ```sh
 # Linux, macOS, WSL
