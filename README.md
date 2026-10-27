@@ -74,6 +74,25 @@ Then ask your agent:
 
 > Build two variants of a login form as a vitrine prototype and ask me which one I prefer.
 
+`vitrine mcp` starts vitrine in the background on first use. All sessions share it, and it exits after 30 minutes without requests. Prototypes and unread events stay on disk. Add `--no-open` if published prototypes should not open in your browser.
+
+## What your agent gets
+
+| Tool | Purpose |
+|---|---|
+| `publish_prototype` | Publish an HTML file by `path`. vitrine reads the file, so the HTML does not pass through the agent's context. Names are `<repo>/<name>`; the repo defaults to the git repository the agent works in. |
+| `wait_for_events` | Return unacknowledged events, or wait for the next one. Events stay unread until the agent passes the `cursor` back as `ack`. |
+| `list_prototypes`, `get_prototype` | Find where a previous session left off. |
+| `list_events` | Every stored event, read or not. |
+| `send_to_prototype` | Show a message in every open tab. |
+| `extend_prototype`, `delete_prototype` | Keep a prototype longer than 3 days without activity, or remove it. |
+
+To keep working while people click, an agent can wait in the background with curl. The token file holds the headers, so the token is never on the command line. vitrine tells the agent the exact command for its platform:
+
+```sh
+curl -s -H "@$HOME/.local/state/vitrine/auth" 'http://127.0.0.1:8720/api/events/next?name=my-app/login&types=choice&ack=0'
+```
+
 ## In a prototype
 
 vitrine injects a small script, `hub.js`. The prototype decides what is worth reporting:
