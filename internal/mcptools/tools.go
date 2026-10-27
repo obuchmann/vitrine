@@ -205,13 +205,16 @@ func (t *tools) checkVersion(ctx context.Context) string {
 // show opens a prototype in the browser the first time this session
 // publishes it. Later versions reload the open tab by themselves.
 func (t *tools) show(url, name string) string {
-	if t.Open == nil {
-		return ""
-	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.opened[name] {
 		return ""
+	}
+	if t.Open == nil {
+		// Said once per prototype, so the agent does not tell the user the
+		// page opened by itself.
+		t.opened[name] = true
+		return "not opened (--no-open). Give the user the URL."
 	}
 	if err := t.Open(url); err != nil {
 		if errors.Is(err, browser.ErrNoDesktop) {
