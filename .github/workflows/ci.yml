@@ -91,9 +91,15 @@ jobs:
           Start-Sleep 2
           $env:VITRINE_DOWNLOAD_URL = 'http://127.0.0.1:8000'
           $env:VITRINE_INSTALL_DIR = Join-Path $env:RUNNER_TEMP 'bin'
+          $bin = Join-Path $env:VITRINE_INSTALL_DIR 'vitrine.exe'
+          $state = Join-Path $env:RUNNER_TEMP 'state'
           Get-Content scripts/install.ps1 -Raw | Invoke-Expression
+          # Upgrades while earlier binaries still run: the first locks vitrine.exe.old.
+          $first = Start-Process $bin -ArgumentList 'serve','-state-dir',"$state-1",'-addr','127.0.0.1:8721' -PassThru -WindowStyle Hidden
           Get-Content scripts/install.ps1 -Raw | Invoke-Expression # replaces the binary
-          & (Join-Path $env:VITRINE_INSTALL_DIR 'vitrine.exe') doctor
+          $second = Start-Process $bin -ArgumentList 'serve','-state-dir',"$state-2",'-addr','127.0.0.1:8722' -PassThru -WindowStyle Hidden
+          Get-Content scripts/install.ps1 -Raw | Invoke-Expression
+          & $bin doctor
           $code = $LASTEXITCODE
-          Stop-Process $server
+          Stop-Process $first, $second, $server
           exit $code
