@@ -1,0 +1,64 @@
+package mcptools
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+
+	"github.com/obuchmann/vitrine/internal/store"
+)
+
+// resolveName completes the name of a prototype (docs/adr/0001-runtime-modes.md):
+// <repo>/<name> stays as it is, a bare <name> gets the repo of dir, and no
+// name at all is taken from file: prototypes/login/index.html is "login",
+// prototypes/login.html too.
+func resolveName(dir, file, name string) (string, error) {
+	if strings.Contains(name, "/") {
+		if !store.ValidName(name) {
+			return "", store.ErrInvalidName
+		}
+		return name, nil
+	}
+	if name == "" {
+		base := filepath.Base(file)
+		name = strings.TrimSuffix(base, filepath.Ext(base))
+		if strings.EqualFold(base, "index.html") || strings.EqualFold(base, "index.htm") {
+			name = filepath.Base(filepath.Dir(file))
+		}
+		name = slug(name)
+	}
+	root := gitRoot(dir)
+	if root == "" {
+		return "", fmt.Errorf("%s is not in a git repository: pass name as <repo>/<name>", dir)
+	}
+	full := slug(filepath.Base(root)) + "/" + name
+	if !store.ValidName(full) {
+		return "", fmt.Errorf("%w (got %q): pass name explicitly", store.ErrInvalidName, full)
+	}
+	return full, nil
+}
+
+// gitRoot returns the closest directory at or above dir that holds .git, a
+// directory in a clone and a file in a worktree, or "" if there is none.
+func gitRoot(dir string) string {
+	for {
+		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return ""
+		}
+		dir = parent
+	}
+}
+
+var notSlug = regexp.MustCompile(`[^a-z0-9._-]+`)
+
+// slug turns a directory or file name into a name segment, e.g. "My App" into "my-app".
+func slug(s string) string {
+	s = notSlug.ReplaceAllString(strings.ToLower(s), "-")
+	return strings.Trim(s, "-._")
+}

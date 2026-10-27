@@ -33,10 +33,11 @@ const DefaultPort = "8720"
 const usage = `vitrine hosts HTML prototypes and tells your agent what people do in them.
 
 Usage:
+  vitrine mcp [flags]     MCP server on stdio; configure your agent with this
   vitrine serve [flags]   run the server in the foreground
   vitrine version         print the version
 
-Run "vitrine serve -h" for the flags.
+Run "vitrine <command> -h" for the flags.
 `
 
 func main() {
@@ -46,6 +47,8 @@ func main() {
 	}
 	var err error
 	switch os.Args[1] {
+	case "mcp":
+		err = mcpCommand(os.Args[2:], os.Stderr)
 	case "serve":
 		err = serve(os.Args[2:], os.Stderr)
 	case "version", "--version", "-v":
@@ -77,6 +80,7 @@ func serve(args []string, stderr io.Writer) error {
 	addr := fs.String("addr", "", "listen address (default 127.0.0.1:"+DefaultPort+" and [::1]:"+DefaultPort+")")
 	publicURL := fs.String("public-url", "", "URL people open, required when listening beyond loopback")
 	stateDir := fs.String("state-dir", "", "where the token and prototypes live (default: per-user state directory, or $"+statedir.EnvOverride+")")
+	idleExit := fs.Duration("idle-exit", 0, "exit after this long without requests, e.g. 30m (default: never)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -91,7 +95,7 @@ func serve(args []string, stderr io.Writer) error {
 	}
 	ws := &web.Server{Store: st, PublicURL: cfg.publicURL, Token: cfg.token, AuthFile: cfg.authFile,
 		AllowedHosts: cfg.hosts, Version: version, Log: log}
-	return run(cfg, ws.Handler(), st, log)
+	return run(cfg, ws.Handler(), st, *idleExit, log)
 }
 
 // configure applies the defaults and the rule that vitrine only listens
@@ -156,7 +160,19 @@ func isLoopback(host string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
-func run(cfg serveConfig, h http.Handler, st *store.Store, log *slog.Logger) error {
+func run(cfg serveConfig, h http.Handler, st *store.Store, idleExit time.Duration, log *slog.Logger) error {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	if idleExit > 0 {
+		idle := newIdleTracker(h, time.Now)
+		h = idle
+		go func() {
+			if idle.wait(ctx, idleExit) {
+				log.Info("exiting after idle period", "idle", idleExit)
+				stop()
+			}
+		}()
+	}
 	srv := &http.Server{Handler: h, ReadHeaderTimeout: 10 * time.Second}
 	var lns []net.Listener
 	for i, a := range cfg.addrs {
@@ -178,8 +194,6 @@ func run(cfg serveConfig, h http.Handler, st *store.Store, log *slog.Logger) err
 		lns = append(lns, ln)
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 	go sweep(ctx, st, log)
 
 	errc := make(chan error, len(lns))
