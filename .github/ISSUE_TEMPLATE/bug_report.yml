@@ -1,0 +1,61 @@
+name: Bug report
+description: Something does not work as described
+labels: [bug, triage]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! Security problems belong in a [private advisory](https://github.com/obuchmann/vitrine/security/advisories/new), not here.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Linux
+        - Windows (PowerShell)
+        - Windows (Git Bash)
+        - WSL2
+        - macOS
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: agent
+    attributes:
+      label: Agent / MCP client
+      options:
+        - Claude Code
+        - opencode
+        - GitHub Copilot (VS Code)
+        - oh my pi
+        - Codex
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Mode
+      options:
+        - Zero-setup (`vitrine mcp`)
+        - Local service (`vitrine service install`)
+        - Foreground (`vitrine serve`)
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Output of `vitrine doctor`
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      render: text

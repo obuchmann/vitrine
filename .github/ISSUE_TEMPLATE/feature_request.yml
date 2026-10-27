@@ -1,0 +1,21 @@
+name: Feature request
+description: Suggest an idea or a new environment to support
+labels: [enhancement, triage]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to do, and what gets in the way?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: How could vitrine help? Sketches and prototypes are welcome.
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Platform, agent, setup (devcontainer, remote host, …) where you need this.
