@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="refresh" content="30">
+<title>vitrine</title>
+<style>
+:root { --bg: #f6f5f1; --surface: #fff; --line: #d9d5cb; --text: #22211e; --muted: #6d6a62; --accent: #2f6fde; --soft: #f0eee8; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #161614; --surface: #1f1f1c; --line: #3a3934; --text: #ecebe6; --muted: #a09d94; --accent: #6b9cf5; --soft: #2a2a26; }
+}
+body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 system-ui, sans-serif; }
+.wrap { max-width: 1100px; margin: 0 auto; padding: 24px 16px 60px; }
+h1 { margin: 0 0 4px; font-size: 26px; }
+.muted { color: var(--muted); }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-top: 16px; overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-size: 12px; color: var(--muted); font-weight: 500; }
+a { color: var(--accent); }
+code { font: 12.5px ui-monospace, Menlo, monospace; background: var(--soft); border-radius: 6px; padding: 1px 5px; }
+.pill { display: inline-block; font-size: 12px; border: 1px solid var(--line); border-radius: 999px; padding: 0 8px; margin: 1px 2px 1px 0; }
+.new { border-color: var(--accent); color: var(--accent); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>vitrine</h1>
+  <p class="muted">Prototypes published by your agents. Without activity a prototype is removed after {{.DefaultTTL}},
+    with <code>keep_for</code> after at most {{.MaxKeepFor}}. The repository is the source.</p>
+
+  <div class="card">
+    {{if .Protos}}
+    <table>
+      <thead><tr><th>Prototype</th><th>Version</th><th>Expires</th><th>Unread</th><th>Open</th><th>Size</th><th>Context</th></tr></thead>
+      <tbody>
+      {{range .Protos}}
+        <tr>
+          <td><a href="/p/{{.Name}}/">{{.Name}}</a></td>
+          <td>v{{.Version}}</td>
+          <td>{{at .ExpiresAt}}{{if .KeepFor}} <span class="pill">keep_for {{.KeepFor}}</span>{{end}}</td>
+          <td>{{if .Unread}}<span class="pill new">{{.Unread}} new</span>{{else}}0{{end}} <span class="muted">/ {{.Events}}</span></td>
+          <td>{{.Viewers}}</td>
+          <td>{{kb .Bytes}}</td>
+          <td>{{range $k, $v := .Context}}<span class="pill">{{$k}}: {{$v}}</span>{{end}}</td>
+        </tr>
+      {{end}}
+      </tbody>
+    </table>
+    {{else}}
+    <p class="muted">Nothing here yet. Ask your agent to publish a prototype.</p>
+    {{end}}
+  </div>
+  <p class="muted" style="font-size:12px">vitrine {{.Version}}</p>
+</div>
+</body>
+</html>
