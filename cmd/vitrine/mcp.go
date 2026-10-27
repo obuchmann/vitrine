@@ -93,12 +93,14 @@ func configureMCP(rawURL, stateDir, envToken string) (mcpConfig, error) {
 		}
 		cfg.addr = net.JoinHostPort(u.Hostname(), port)
 	}
-	if cfg.token != "" {
+	if !cfg.local {
+		if cfg.token == "" {
+			return cfg, fmt.Errorf("%s is not on this machine: set VITRINE_TOKEN", cfg.baseURL)
+		}
 		return cfg, nil
 	}
-	if !cfg.local {
-		return cfg, fmt.Errorf("%s is not on this machine: set VITRINE_TOKEN", cfg.baseURL)
-	}
+	// A daemon started from here needs its state directory even if the
+	// token comes from the environment.
 	if stateDir == "" {
 		if stateDir, err = statedir.Default(); err != nil {
 			return cfg, err
@@ -106,6 +108,9 @@ func configureMCP(rawURL, stateDir, envToken string) (mcpConfig, error) {
 	}
 	if cfg.stateDir, err = filepath.Abs(stateDir); err != nil {
 		return cfg, err
+	}
+	if cfg.token != "" {
+		return cfg, nil
 	}
 	// The daemon reads the same file; whoever comes first creates it.
 	cfg.authFile = filepath.Join(cfg.stateDir, auth.FileName)

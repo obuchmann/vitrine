@@ -2,7 +2,7 @@
 //
 //   hub.emit(type, data)    report an interaction; the prototype decides what
 //                           counts. type: lower case, e.g. "choice", "comment"
-//   hub.on("message", fn)   messages an agent sends to open tabs; without a
+//   hub.on("message", fn)   messages an agent sends to visible tabs; without a
 //                           handler hub.js shows them as a toast
 //   hub.on("version", fn)   a new version is available; without a handler
 //                           hub.js reloads the page
@@ -85,18 +85,46 @@
     }, true);
   }
 
+  // Browsers allow only six HTTP/1.1 connections per host, shared by every
+  // tab. A stream is held only while the tab is visible, so hidden tabs do not
+  // block page loads and events of the visible ones. On reconnect the server
+  // sends the current version, so a hidden tab still picks up new versions.
+  // If too many tabs are visible, the server pauses the oldest; it connects
+  // again when it is shown or focused.
   if (!window.EventSource) return;
-  const es = new EventSource(`/api/events/stream?name=${encodeURIComponent(name)}&hub=1&token=${encodeURIComponent(token)}`);
-  es.addEventListener("message", (e) => {
-    const d = JSON.parse(e.data);
-    if (!fire("message", d)) toast(d.message);
-  });
-  es.addEventListener("version", (e) => {
-    const d = JSON.parse(e.data);
-    if (d.version > version && !fire("version", d)) location.reload();
-  });
-  es.addEventListener("gone", () => {
-    es.close();
-    toast("This prototype was removed.");
-  });
+  let es = null;
+  let gone = false;
+  let latest = version;
+  function connect() {
+    if (es || gone) return;
+    es = new EventSource(`/api/events/stream?name=${encodeURIComponent(name)}&hub=1&token=${encodeURIComponent(token)}`);
+    es.addEventListener("message", (e) => {
+      const d = JSON.parse(e.data);
+      if (!fire("message", d)) toast(d.message);
+    });
+    es.addEventListener("version", (e) => {
+      const d = JSON.parse(e.data);
+      if (d.version <= latest) return;
+      latest = d.version;
+      if (!fire("version", d)) location.reload();
+    });
+    es.addEventListener("paused", () => {
+      disconnect();
+      toast("Live updates paused: too many vitrine tabs are open. Close the ones you no longer need.");
+    });
+    es.addEventListener("gone", () => {
+      gone = true;
+      disconnect();
+      toast("This prototype was removed.");
+    });
+  }
+  function disconnect() {
+    if (es) es.close();
+    es = null;
+  }
+  document.addEventListener("visibilitychange", () => (document.hidden ? disconnect() : connect()));
+  window.addEventListener("pagehide", disconnect);
+  window.addEventListener("pageshow", () => { if (!document.hidden) connect(); });
+  window.addEventListener("focus", connect);
+  if (!document.hidden) connect();
 })();

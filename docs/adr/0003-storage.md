@@ -19,7 +19,7 @@ vitrine stores everything as plain files in the state directory (see [ADR 0002](
 
 ```
 prototypes/<repo>/<name>/index.html
-prototypes/<repo>/<name>/meta.json     # version, expiry, keep_for, context, event token, ack cursor
+prototypes/<repo>/<name>/meta.json     # version, expiry, keep_for, context, event token, acknowledged and delivered events
 prototypes/<repo>/<name>/events.jsonl  # append-only
 ```
 
@@ -30,6 +30,8 @@ prototypes/<repo>/<name>/events.jsonl  # append-only
   - A prototype lives 3 days after its last activity, or up to 30 days with `keep_for`.
   - Cleanup deletes directories.
   - Limits stay in place: 2 MB per prototype, 64 KB per event, 10,000 events per prototype, and a total size cap.
+  - The total size cap makes room by removing the longest unused prototypes, but never one with unread events it reported itself. If that is not enough, nothing is removed and the upload or event is refused with `store_full`.
+  - An `ack` acknowledges only events a fetch returned. Events a `types` filter left out stay unread.
   - A full inbox makes room with acknowledged events first, then with unread automatic views and clicks. Unread events a prototype reported itself are never dropped: a new event is refused with `inbox_full` instead.
 - **Atomic writes.** Writes go to a temporary file followed by a rename. Appends to `events.jsonl` are flushed before the event is acknowledged to the sender.
 

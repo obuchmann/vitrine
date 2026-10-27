@@ -9,11 +9,12 @@ import (
 )
 
 // task is the Task Scheduler definition: start at the user's logon with
-// the user's normal rights, no time limit, and restart after a failure,
-// e.g. while a daemon started by vitrine mcp still holds the port.
+// the user's normal rights and no time limit. RestartOnFailure only covers a
+// task that fails to launch, not one that exits with an error, so serve waits
+// itself while a daemon started by vitrine mcp still holds the port.
 func (c Config) task() string {
 	var args []string
-	for _, a := range c.serveArgs() {
+	for _, a := range append(c.serveArgs(), "-wait-port") {
 		args = append(args, windowsQuote(a))
 	}
 	return fmt.Sprintf(`<?xml version="1.0" encoding="UTF-16"?>

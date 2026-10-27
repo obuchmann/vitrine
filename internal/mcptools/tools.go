@@ -76,7 +76,7 @@ func Register(server *mcp.Server, o Options) {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_prototype",
-		Description: "One prototype: version, expiry, unread events, open tabs, context. unknown_prototype means: publish it again.",
+		Description: "One prototype: version, expiry, unread events, visible tabs (viewers), context. unknown_prototype means: publish it again.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in nameIn) (*mcp.CallToolResult, protoOut, error) {
 		info, err := c.Get(ctx, in.Name)
 		if err != nil {
@@ -88,7 +88,8 @@ func Register(server *mcp.Server, o Options) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "wait_for_events",
 		Description: "Return unacknowledged events of a prototype, or wait until one arrives. Pass the cursor of the " +
-			"previous result as ack once you processed it; ack=0 returns everything not yet acknowledged (use it in a new session). " +
+			"previous result as ack once you processed it; it acknowledges only the events you received, so events of types you " +
+			"filtered out stay unread. ack=0 returns everything not yet acknowledged (use it in a new session). " +
 			"Returns empty with timed_out after timeout_s (default 240): just call again. To keep working while waiting, " +
 			"use the background curl from the server instructions instead.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in waitIn) (*mcp.CallToolResult, fetchOut, error) {
@@ -104,7 +105,7 @@ func Register(server *mcp.Server, o Options) {
 		if err != nil {
 			return nil, fetchOut{}, err
 		}
-		return nil, fetchOut{Events: toEvents(res.Events), Cursor: res.Cursor, UnreadLeft: res.UnreadLeft, TimedOut: res.TimedOut}, nil
+		return nil, fetchOut{Events: toEvents(res.Events), Cursor: res.Cursor, UnreadLeft: res.UnreadLeft, TimedOut: res.TimedOut, Warning: res.Warning}, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
@@ -120,7 +121,8 @@ func Register(server *mcp.Server, o Options) {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "send_to_prototype",
-		Description: "Send a message to every open tab of a prototype. hub.js shows it as a toast unless the prototype " +
+		Description: "Send a message to every visible tab of a prototype (delivered_to counts them; hidden tabs miss it). " +
+			"hub.js shows it as a toast unless the prototype " +
 			"handles it with hub.on(\"message\", fn). New versions reload open tabs by themselves; no message needed for that.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in sendIn) (*mcp.CallToolResult, sendOut, error) {
 		var data json.RawMessage
@@ -319,8 +321,9 @@ func toEvents(evs []store.Event) []event {
 type fetchOut struct {
 	Events     []event `json:"events"`
 	Cursor     int64   `json:"cursor" jsonschema:"pass as ack once you processed these events"`
-	UnreadLeft int     `json:"unread_left"`
+	UnreadLeft int     `json:"unread_left" jsonschema:"unread events not in this result, including other types"`
 	TimedOut   bool    `json:"timed_out,omitempty" jsonschema:"nothing arrived in time: call again"`
+	Warning    string  `json:"warning,omitempty" jsonschema:"pass it on to the user"`
 }
 
 type eventsOut struct {

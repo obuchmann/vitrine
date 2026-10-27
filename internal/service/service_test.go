@@ -159,7 +159,7 @@ func TestTaskScheduler(t *testing.T) {
 		t.Fatalf("task is not XML: %v\n%s", err, task)
 	}
 	for _, want := range []string{"<UserId>DESKTOP\\me</UserId>", "<LogonTrigger>", "<Command>" + c.Exe + "</Command>",
-		"<Arguments>serve -state-dir &#34;" + c.StateDir + "&#34;</Arguments>", "<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>"} {
+		"<Arguments>serve -state-dir &#34;" + c.StateDir + "&#34; -wait-port</Arguments>", "<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>"} {
 		if !strings.Contains(task, want) {
 			t.Errorf("task misses %s:\n%s", want, task)
 		}

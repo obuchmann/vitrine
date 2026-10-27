@@ -105,10 +105,10 @@ On WSL, the service needs systemd (`[boot] systemd=true` in `/etc/wsl.conf`). Wi
 | Tool | Purpose |
 |---|---|
 | `publish_prototype` | Publish an HTML file by `path`. vitrine reads the file, so the HTML does not pass through the agent's context. Names are `<repo>/<name>`; the repo defaults to the git repository that contains the file. |
-| `wait_for_events` | Return unacknowledged events, or wait for the next one. Events stay unread until the agent passes the `cursor` back as `ack`. |
+| `wait_for_events` | Return unacknowledged events, or wait for the next one. Events stay unread until the agent passes the `cursor` back as `ack`, which acknowledges only events it received. |
 | `list_prototypes`, `get_prototype` | Find where a previous session left off. |
 | `list_events` | Every stored event, read or not. |
-| `send_to_prototype` | Show a message in every open tab. |
+| `send_to_prototype` | Show a message in every tab that shows the prototype right now. |
 | `extend_prototype`, `delete_prototype` | Keep a prototype longer than 3 days without activity, or remove it. |
 
 To keep working while people click, an agent can wait in the background with curl. The token file holds the headers, so the token is never on the command line. vitrine tells the agent the exact command for its platform:
@@ -129,6 +129,8 @@ vitrine injects a small script, `hub.js`. The prototype decides what is worth re
 ## Troubleshooting
 
 `vitrine doctor` checks the platform, the state directory and the token file permissions, whether vitrine or another program uses the port, the service and how the browser is opened. Problems are marked with `!`. Please include its output in bug reports.
+
+**Many open tabs.** Browsers allow only six connections to one host over plain HTTP, and every vitrine tab showing a prototype keeps one open for live updates. Hidden tabs let go of theirs. With more than four visible vitrine tabs, the oldest pauses its live updates until you switch back to it, so pages and events always have connections left. Clicks and events still work in a paused tab. Close tabs you no longer need.
 
 ## Principles
 

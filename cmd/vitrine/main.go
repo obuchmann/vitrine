@@ -98,6 +98,7 @@ func serve(args []string, stderr io.Writer) error {
 	publicURL := fs.String("public-url", "", "URL people open, required when listening beyond loopback")
 	stateDir := fs.String("state-dir", "", "where the token and prototypes live (default: per-user state directory, or $"+statedir.EnvOverride+")")
 	idleExit := fs.Duration("idle-exit", 0, "exit after this long without requests, e.g. 30m (default: never)")
+	waitPort := fs.Bool("wait-port", false, "if the port is in use, wait until it is free instead of exiting")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -121,7 +122,7 @@ func serve(args []string, stderr io.Writer) error {
 	}
 	ws := &web.Server{Store: st, PublicURL: cfg.publicURL, Token: cfg.token, AuthFile: cfg.authFile,
 		AllowedHosts: cfg.hosts, Version: version, Log: log}
-	return run(cfg, ws.Handler(), st, *idleExit, log)
+	return run(cfg, ws.Handler(), st, *idleExit, *waitPort, log)
 }
 
 // configure applies the defaults and the rule that vitrine only listens
@@ -186,7 +187,10 @@ func isLoopback(host string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
-func run(cfg serveConfig, h http.Handler, st *store.Store, idleExit time.Duration, log *slog.Logger) error {
+// portRetry is how often serve -wait-port tries to bind again.
+var portRetry = 10 * time.Second
+
+func run(cfg serveConfig, h http.Handler, st *store.Store, idleExit time.Duration, waitPort bool, log *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	if idleExit > 0 {
@@ -200,24 +204,21 @@ func run(cfg serveConfig, h http.Handler, st *store.Store, idleExit time.Duratio
 		}()
 	}
 	srv := &http.Server{Handler: h, ReadHeaderTimeout: 10 * time.Second}
-	var lns []net.Listener
-	for i, a := range cfg.addrs {
-		ln, err := net.Listen("tcp", a)
-		if err != nil {
-			// The default also tries IPv6 loopback, which some systems lack.
-			if i > 0 && len(lns) > 0 {
-				log.Debug("not listening", "addr", a, "err", err)
-				continue
-			}
-			for _, l := range lns {
-				l.Close()
-			}
-			if isAddrInUse(err) {
-				return fmt.Errorf("%s is in use: is vitrine already running? (%w)", a, err)
-			}
-			return err
+	lns, err := listen(cfg.addrs, log)
+	// A service started at logon may find the port held by a daemon that
+	// vitrine mcp started; that one exits once it is idle. Task Scheduler
+	// does not restart a task that exits with an error, so wait here.
+	for waitPort && err != nil && isAddrInUse(err) {
+		log.Info("waiting for the port", "err", err, "retry", portRetry)
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-time.After(portRetry):
 		}
-		lns = append(lns, ln)
+		lns, err = listen(cfg.addrs, log)
+	}
+	if err != nil {
+		return err
 	}
 
 	go sweep(ctx, st, log)
@@ -242,6 +243,30 @@ func run(cfg serveConfig, h http.Handler, st *store.Store, idleExit time.Duratio
 		return err
 	}
 	return nil
+}
+
+// listen opens every address. Only the first one is required: the default
+// also tries IPv6 loopback, which some systems lack.
+func listen(addrs []string, log *slog.Logger) ([]net.Listener, error) {
+	var lns []net.Listener
+	for i, a := range addrs {
+		ln, err := net.Listen("tcp", a)
+		if err != nil {
+			if i > 0 && len(lns) > 0 {
+				log.Debug("not listening", "addr", a, "err", err)
+				continue
+			}
+			for _, l := range lns {
+				l.Close()
+			}
+			if isAddrInUse(err) {
+				return nil, fmt.Errorf("%s is in use: is vitrine already running? (%w)", a, err)
+			}
+			return nil, err
+		}
+		lns = append(lns, ln)
+	}
+	return lns, nil
 }
 
 func sweep(ctx context.Context, st *store.Store, log *slog.Logger) {

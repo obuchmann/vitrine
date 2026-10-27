@@ -239,12 +239,12 @@ func TestStreamForHubGetsMessagesAndVersions(t *testing.T) {
 	}
 	e.upload("a/b", nil)
 	var got []string
-	for lines.Scan() && len(got) < 2 {
+	for lines.Scan() && len(got) < 3 {
 		if l := lines.Text(); strings.HasPrefix(l, "event: ") {
 			got = append(got, strings.TrimPrefix(l, "event: "))
 		}
 	}
-	if strings.Join(got, ",") != "message,version" {
+	if strings.Join(got, ",") != "version,message,version" {
 		t.Fatalf("stream kinds %v", got)
 	}
 }
@@ -406,9 +406,13 @@ func TestHealthIsOpen(t *testing.T) {
 func TestHubIsInjectedAfterDoctypeWithoutHead(t *testing.T) {
 	e := newEnv(t)
 	for html, prefix := range map[string]string{
-		"<!DOCTYPE html><title>x</title><p>hi": "<!DOCTYPE html><script src=",
-		"<!-- c -->\n<!doctype html><p>hi":     "<!-- c -->\n<!doctype html><script src=",
-		"<p>hi</p>":                            "<script src=",
+		"<!DOCTYPE html><title>x</title><p>hi":                                     "<!DOCTYPE html><script src=",
+		"<!-- c -->\n<!doctype html><p>hi":                                         "<!-- c -->\n<!doctype html><script src=",
+		"<p>hi</p>":                                                                "<script src=",
+		"<!--\n generated\n-->\n<!doctype html><p>hi":                              "<!--\n generated\n-->\n<!doctype html><script src=",
+		"<!-- <head> -->\n<!DOCTYPE html>\n<html><HEAD lang=\"a>b\"><title>":       "<!-- <head> -->\n<!DOCTYPE html>\n<html><HEAD lang=\"a>b\"><script src=",
+		"<!doctype html><html data-track=\"view\"><body><script>'<head>'</script>": "<!doctype html><html data-track=\"view\"><script src=",
+		"\xef\xbb\xbf<!doctype html><header>x</header>":                            "\xef\xbb\xbf<!doctype html><script src=",
 	} {
 		if code, body, _ := e.do("POST", "/api/p/a/b", "text/html", strings.NewReader(html), agentHeaders); code != 200 {
 			t.Fatalf("upload: %d %s", code, body)

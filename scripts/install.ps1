@@ -46,13 +46,17 @@
         Expand-Archive -Path (Join-Path $tmp $zip) -DestinationPath (Join-Path $tmp 'x') -Force
         New-Item -ItemType Directory -Force -Path $dir | Out-Null
         $exe = Join-Path $dir 'vitrine.exe'
-        # A running exe cannot be overwritten, but it can be renamed.
+        # A running exe cannot be overwritten or deleted, but it can be renamed.
+        # Copies from earlier upgrades that still run stay until a later install.
+        $old = $null
         if (Test-Path $exe) {
-            Remove-Item -Force -ErrorAction SilentlyContinue "$exe.old"
-            Move-Item -Force $exe "$exe.old"
+            Get-ChildItem -Path $dir -Filter 'vitrine.exe.old*' | Remove-Item -Force -ErrorAction SilentlyContinue
+            $old = "$exe.old"
+            if (Test-Path $old) { $old = "$exe.old-" + [guid]::NewGuid().ToString('N') }
+            Move-Item $exe $old
         }
         Copy-Item -Path (Join-Path $tmp 'x\vitrine.exe') -Destination $exe
-        Remove-Item -Force -ErrorAction SilentlyContinue "$exe.old"
+        if ($old) { Remove-Item -Force -ErrorAction SilentlyContinue $old }
     } finally {
         Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $tmp
     }
