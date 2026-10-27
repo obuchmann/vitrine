@@ -29,7 +29,20 @@ func TestResolveName(t *testing.T) {
 		}
 	}
 
+	// The file's repository wins over the working directory's.
+	other := filepath.Join(t.TempDir(), "vitrine-test")
+	if err := os.MkdirAll(filepath.Join(other, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := resolveName(sub, filepath.Join(other, "prototypes", "wahl", "index.html"), ""); err != nil || got != "vitrine-test/wahl" {
+		t.Errorf("file in another repository: %q, %v", got, err)
+	}
+
 	outside := t.TempDir()
+	// A file outside any repository gets the working directory's.
+	if got, err := resolveName(sub, filepath.Join(outside, "x.html"), ""); err != nil || got != "family-os/x" {
+		t.Errorf("file outside a repository: %q, %v", got, err)
+	}
 	if _, err := resolveName(outside, filepath.Join(outside, "a.html"), ""); err == nil || !strings.Contains(err.Error(), "<repo>/<name>") {
 		t.Errorf("outside a repository: %v", err)
 	}

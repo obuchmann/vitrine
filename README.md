@@ -104,7 +104,7 @@ On WSL, the service needs systemd (`[boot] systemd=true` in `/etc/wsl.conf`). Wi
 
 | Tool | Purpose |
 |---|---|
-| `publish_prototype` | Publish an HTML file by `path`. vitrine reads the file, so the HTML does not pass through the agent's context. Names are `<repo>/<name>`; the repo defaults to the git repository the agent works in. |
+| `publish_prototype` | Publish an HTML file by `path`. vitrine reads the file, so the HTML does not pass through the agent's context. Names are `<repo>/<name>`; the repo defaults to the git repository that contains the file. |
 | `wait_for_events` | Return unacknowledged events, or wait for the next one. Events stay unread until the agent passes the `cursor` back as `ack`. |
 | `list_prototypes`, `get_prototype` | Find where a previous session left off. |
 | `list_events` | Every stored event, read or not. |

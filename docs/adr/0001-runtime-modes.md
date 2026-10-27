@@ -29,7 +29,7 @@ One binary with these commands:
 
 **Publishing reads files locally.** `publish_prototype` accepts a `path`. The stdio process reads the file relative to the agent's working directory, so HTML never passes through the agent's context, and the daemon needs no access to the repository.
 
-**Naming:** prototypes are called `<repo>/<name>`. `repo` defaults to the name of the git root of the agent's working directory.
+**Naming:** prototypes are called `<repo>/<name>`. `repo` defaults to the name of the git root that contains the published file, and otherwise to that of the agent's working directory. Agents often work in one directory and publish a file from another repository.
 
 **Browser:** opens automatically on the first publish. `--no-open` disables this. Without a desktop session, vitrine only prints the URL.
 
