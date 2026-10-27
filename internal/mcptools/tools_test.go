@@ -36,6 +36,10 @@ type env struct {
 
 // newEnv connects an MCP client to the tools, which call a vitrine over HTTP.
 func newEnv(t *testing.T, open func(string) error) *env {
+	return newEnvVersion(t, open, "")
+}
+
+func newEnvVersion(t *testing.T, open func(string) error, version string) *env {
 	t.Helper()
 	st, err := store.Open(store.Options{Dir: t.TempDir(), Limits: store.DefaultLimits()})
 	if err != nil {
@@ -58,7 +62,7 @@ func newEnv(t *testing.T, open func(string) error) *env {
 	}
 	server := mcp.NewServer(&mcp.Implementation{Name: "vitrine", Version: "test"},
 		&mcp.ServerOptions{Instructions: Instructions("linux", srv.URL, "/state/auth", time.Hour)})
-	Register(server, Options{Client: &client.Client{BaseURL: srv.URL, Token: token}, Dir: e.repo, Open: open})
+	Register(server, Options{Client: &client.Client{BaseURL: srv.URL, Token: token}, Dir: e.repo, Open: open, Version: version})
 
 	ctx := context.Background()
 	st1, st2 := mcp.NewInMemoryTransports()
@@ -171,6 +175,18 @@ func TestPublishWithoutDesktopTellsTheAgent(t *testing.T) {
 	pub := e.mustCall("publish_prototype", map[string]any{"path": "a.html"})
 	if !strings.Contains(pub["browser"].(string), "Give the user the URL") {
 		t.Fatalf("publish: %v", pub)
+	}
+}
+
+func TestPublishWarnsAboutAnotherServerVersion(t *testing.T) {
+	e := newEnvVersion(t, nil, "0.2.0") // the server is "test"
+	e.write("a.html", page)
+	pub := e.mustCall("publish_prototype", map[string]any{"path": "a.html"})
+	if w, _ := pub["warning"].(string); !strings.Contains(w, "vitrine test is running, but vitrine mcp is 0.2.0") {
+		t.Fatalf("publish: %v", pub)
+	}
+	if again := e.mustCall("publish_prototype", map[string]any{"path": "a.html"}); again["warning"] != nil {
+		t.Fatalf("warned twice: %v", again)
 	}
 }
 

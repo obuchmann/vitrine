@@ -76,6 +76,16 @@ Then ask your agent:
 
 `vitrine mcp` starts vitrine in the background on first use. All sessions share it, and it exits after 30 minutes without requests. Prototypes and unread events stay on disk. Add `--no-open` if published prototypes should not open in your browser.
 
+To keep vitrine running instead, for example so a prototype stays reachable while no agent runs, install it as a service for your user. No administrator rights are needed:
+
+```sh
+vitrine service install     # systemd --user, a launchd agent, or a Task Scheduler task at logon
+vitrine service status
+vitrine service uninstall
+```
+
+On WSL, the service needs systemd (`[boot] systemd=true` in `/etc/wsl.conf`). Without it, `vitrine mcp` works as before.
+
 ## What your agent gets
 
 | Tool | Purpose |
@@ -101,6 +111,10 @@ vitrine injects a small script, `hub.js`. The prototype decides what is worth re
 <html data-track="view,click">  <!-- optional automatic events -->
 <button onclick="hub.emit('choice', { variant: 'B' })">I'll take B</button>
 ```
+
+## Troubleshooting
+
+`vitrine doctor` checks the platform, the state directory and the token file permissions, whether vitrine or another program uses the port, the service and how the browser is opened. Problems are marked with `!`. Please include its output in bug reports.
 
 ## Principles
 

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -31,9 +32,10 @@ const (
 
 // Options configure the tools.
 type Options struct {
-	Client *client.Client
-	Dir    string             // the agent's working directory; publish paths are relative to it
-	Open   func(string) error // opens a URL in the browser; nil never opens one
+	Client  *client.Client
+	Dir     string             // the agent's working directory; publish paths are relative to it
+	Open    func(string) error // opens a URL in the browser; nil never opens one
+	Version string             // of this binary, compared with the server's
 }
 
 // Register adds all tools to server.
@@ -150,8 +152,9 @@ func Register(server *mcp.Server, o Options) {
 type tools struct {
 	Options
 
-	mu     sync.Mutex
-	opened map[string]bool // prototypes this session showed in the browser
+	mu      sync.Mutex
+	opened  map[string]bool // prototypes this session showed in the browser
+	checked bool            // the server version was compared
 }
 
 func (t *tools) publish(ctx context.Context, _ *mcp.CallToolRequest, in publishIn) (*mcp.CallToolResult, publishOut, error) {
@@ -174,7 +177,27 @@ func (t *tools) publish(ctx context.Context, _ *mcp.CallToolRequest, in publishI
 	if err != nil {
 		return nil, publishOut{}, err
 	}
+	if note := t.checkVersion(ctx); note != "" {
+		res.Warning = strings.TrimSpace(res.Warning + " " + note)
+	}
 	return nil, publishOut{PublishResult: res, Browser: t.show(res.URL, name)}, nil
+}
+
+// checkVersion warns once per session if the running server is another
+// version, e.g. a daemon that kept running across an upgrade.
+func (t *tools) checkVersion(ctx context.Context) string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.checked || t.Version == "" || t.Version == "dev" {
+		return ""
+	}
+	t.checked = true
+	v, err := t.Client.Health(ctx)
+	if err != nil || v == t.Version || v == "dev" {
+		return ""
+	}
+	return fmt.Sprintf("vitrine %s is running, but vitrine mcp is %s. Tell the user to restart it: "+
+		"\"vitrine service install\" for the service; otherwise it exits after 30 minutes without requests.", v, t.Version)
 }
 
 // show opens a prototype in the browser the first time this session
