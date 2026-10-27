@@ -233,7 +233,10 @@ func TestStreamForHubGetsMessagesAndVersions(t *testing.T) {
 	lines := bufio.NewScanner(res.Body)
 	lines.Scan() // ": vitrine"
 	waitViewers(t, e.st, "a/b", 1)
-	e.st.Message("a/b", "Thanks!", nil)
+	code, body, _ := e.do("POST", "/api/p/a/b/message", "application/json", strings.NewReader(`{"message":"Thanks!"}`), agentHeaders)
+	if code != 200 || !strings.Contains(body, `"delivered_to": 1`) {
+		t.Fatalf("message: %d %s", code, body)
+	}
 	e.upload("a/b", nil)
 	var got []string
 	for lines.Scan() && len(got) < 2 {
@@ -243,6 +246,25 @@ func TestStreamForHubGetsMessagesAndVersions(t *testing.T) {
 	}
 	if strings.Join(got, ",") != "message,version" {
 		t.Fatalf("stream kinds %v", got)
+	}
+}
+
+func TestMessageNeedsAgentAndText(t *testing.T) {
+	e := newEnv(t)
+	e.upload("a/b", nil)
+	msg := `{"message":"hi"}`
+	if code, _, _ := e.do("POST", "/api/p/a/b/message", "application/json", strings.NewReader(msg),
+		map[string]string{"X-Vitrine": "1", EventTokenHeader: e.pageToken("a/b")}); code != 401 {
+		t.Fatalf("page token sends a message: %d", code)
+	}
+	if code, _, _ := e.do("POST", "/api/p/a/b/message", "application/json", strings.NewReader(`{}`), agentHeaders); code != 400 {
+		t.Fatalf("empty message: %d", code)
+	}
+	if code, body, _ := e.do("POST", "/api/p/a/b/message", "application/json", strings.NewReader(msg), agentHeaders); code != 200 || !strings.Contains(body, `"delivered_to": 0`) {
+		t.Fatalf("message without tabs: %d %s", code, body)
+	}
+	if code, _, _ := e.do("POST", "/api/p/x/y/message", "application/json", strings.NewReader(msg), agentHeaders); code != 404 {
+		t.Fatalf("unknown prototype: %d", code)
 	}
 }
 

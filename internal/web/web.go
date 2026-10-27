@@ -89,6 +89,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/p/{repo}/{name}", s.agent(s.handleUpload))
 	mux.HandleFunc("DELETE /api/p/{repo}/{name}", s.agent(s.handleDelete))
 	mux.HandleFunc("POST /api/p/{repo}/{name}/extend", s.agent(s.handleExtend))
+	mux.HandleFunc("POST /api/p/{repo}/{name}/message", s.agent(s.handleMessage))
 	mux.HandleFunc("GET /api/events/{repo}/{name}", s.agent(s.handleListEvents))
 	mux.HandleFunc("GET /api/events/next", s.agent(s.handleNext))
 	return s.checkHost(mux)
@@ -287,6 +288,35 @@ func (s *Server) handleExtend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, s.NewPublishResult(info, warning))
+}
+
+// MessageInput is what an agent sends to the open tabs of a prototype.
+type MessageInput struct {
+	Message string          `json:"message"`
+	Data    json.RawMessage `json:"data,omitempty"`
+}
+
+// MessageResult says how many open tabs received a message.
+type MessageResult struct {
+	DeliveredTo int `json:"delivered_to"`
+}
+
+func (s *Server) handleMessage(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, int64(s.Store.Limits().MaxEventBytes)+4<<10)
+	var in MessageInput
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil || in.Message == "" {
+		badRequest(w, "invalid message", `{"message":"Thanks, noted!","data":{...}}`)
+		return
+	}
+	if string(in.Data) == "null" {
+		in.Data = nil
+	}
+	n, err := s.Store.Message(pathName(r), in.Message, in.Data)
+	if err != nil {
+		s.writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, MessageResult{DeliveredTo: n})
 }
 
 func (s *Server) handleProtoRedirect(w http.ResponseWriter, r *http.Request) {
