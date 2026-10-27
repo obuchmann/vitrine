@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Releases: archives for Linux, macOS and Windows on amd64 and arm64, built with GoReleaser, with SBOMs and checksums signed by cosign.
+- `install.sh` (Linux, macOS, WSL) and `install.ps1` (Windows) install the latest release without root or administrator rights and check the checksum. `go install github.com/obuchmann/vitrine/cmd/vitrine@latest` reports the module version.
 - `vitrine service install | uninstall | status`: runs `vitrine serve` at every login as a systemd `--user` unit, a launchd agent or a Task Scheduler task, without administrator rights.
 - `vitrine doctor`: reports platform and WSL, state directory, token file permissions, what answers on the port (and whether it is another version), the service and the browser opener.
 - `publish_prototype` warns once per session if the running vitrine is another version than `vitrine mcp`.
