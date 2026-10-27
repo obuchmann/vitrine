@@ -35,6 +35,8 @@ const usage = `vitrine hosts HTML prototypes and tells your agent what people do
 Usage:
   vitrine mcp [flags]     MCP server on stdio; configure your agent with this
   vitrine serve [flags]   run the server in the foreground
+  vitrine service ...     run vitrine in the background at every login
+  vitrine doctor          check this machine; include the output in bug reports
   vitrine version         print the version
 
 Run "vitrine <command> -h" for the flags.
@@ -51,6 +53,10 @@ func main() {
 		err = mcpCommand(os.Args[2:], os.Stderr)
 	case "serve":
 		err = serve(os.Args[2:], os.Stderr)
+	case "service":
+		err = serviceCommand(os.Args[2:], os.Stdout, os.Stderr)
+	case "doctor":
+		err = doctorCommand(os.Args[2:], os.Stdout, os.Stderr)
 	case "version", "--version", "-v":
 		fmt.Println(version)
 	case "help", "-h", "--help":
@@ -87,6 +93,15 @@ func serve(args []string, stderr io.Writer) error {
 	cfg, err := configure(*addr, *publicURL, *stateDir, os.Getenv("VITRINE_TOKEN"))
 	if err != nil {
 		return err
+	}
+	if releaseOwnConsole() {
+		// Started by Task Scheduler: its window is gone, so log to a file.
+		f, err := openLog(filepath.Join(cfg.stateDir, logFile))
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		stderr = f
 	}
 	log := slog.New(slog.NewTextHandler(stderr, nil))
 	st, err := store.Open(store.Options{Dir: filepath.Join(cfg.stateDir, "prototypes"), Limits: store.DefaultLimits(), Log: log})
