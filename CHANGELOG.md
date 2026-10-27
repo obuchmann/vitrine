@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `vitrine service install | uninstall | status`: runs `vitrine serve` at every login as a systemd `--user` unit, a launchd agent or a Task Scheduler task, without administrator rights.
+- `vitrine doctor`: reports platform and WSL, state directory, token file permissions, what answers on the port (and whether it is another version), the service and the browser opener.
+- `publish_prototype` warns once per session if the running vitrine is another version than `vitrine mcp`.
+- On WSL, prototypes open with `explorer.exe` if `wslview` is missing.
 - `vitrine mcp`: MCP server on stdio. It starts vitrine in the background when nothing answers on `127.0.0.1:8720`, and that daemon exits after 30 minutes without requests (`vitrine serve -idle-exit`). The agent token stays in this process.
 - MCP tools `publish_prototype` (reads the file by `path`; the name defaults to `<git repo>/<folder>`), `wait_for_events`, `list_prototypes`, `get_prototype`, `list_events`, `send_to_prototype`, `extend_prototype` and `delete_prototype`.
 - The first publish of a prototype opens it in the browser (`xdg-open`, `open`, `rundll32`, or `wslview` on WSL). `--no-open` turns this off.
