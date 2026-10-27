@@ -439,3 +439,48 @@ func TestMessagesCountTabsOnly(t *testing.T) {
 	default:
 	}
 }
+
+func TestOldestTabIsPausedBeyondTheLimit(t *testing.T) {
+	s, _ := newStore(t)
+	publish(t, s, "a/b")
+	publish(t, s, "a/c")
+	agent, cancelAgent, _ := s.Subscribe("a/b", false)
+	defer cancelAgent()
+	var tabs []<-chan Push
+	for i := 0; i < s.Limits().MaxTabs; i++ {
+		name := []string{"a/b", "a/c"}[i%2]
+		ch, cancel, err := s.Subscribe(name, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer cancel()
+		tabs = append(tabs, ch)
+	}
+	if res := fetchNow(t, s, "a/b", 0); res.Warning != TabsWarning {
+		t.Fatalf("warning at the limit: %q", res.Warning)
+	}
+	_, cancel, err := s.Subscribe("a/c", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cancel()
+	if p, open := <-tabs[0]; !open || p.Kind != "paused" {
+		t.Fatalf("oldest tab got %+v open=%v, want paused", p, open)
+	}
+	if _, open := <-tabs[0]; open {
+		t.Fatal("paused tab still subscribed")
+	}
+	select {
+	case p, open := <-tabs[1]:
+		t.Fatalf("second tab got %+v open=%v", p, open)
+	case p := <-agent:
+		t.Fatalf("agent stream got %+v", p)
+	default:
+	}
+	if b, _ := s.Get("a/b"); b.Viewers != 1 {
+		t.Fatalf("a/b viewers %d, want 1", b.Viewers)
+	}
+	if _, warning, _ := s.Publish(PublishInput{Name: "a/b", HTML: []byte("x")}); warning != TabsWarning {
+		t.Fatalf("publish warning %q", warning)
+	}
+}

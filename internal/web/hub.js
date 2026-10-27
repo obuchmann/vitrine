@@ -89,6 +89,8 @@
   // tab. A stream is held only while the tab is visible, so hidden tabs do not
   // block page loads and events of the visible ones. On reconnect the server
   // sends the current version, so a hidden tab still picks up new versions.
+  // If too many tabs are visible, the server pauses the oldest; it connects
+  // again when it is shown or focused.
   if (!window.EventSource) return;
   let es = null;
   let gone = false;
@@ -106,6 +108,10 @@
       latest = d.version;
       if (!fire("version", d)) location.reload();
     });
+    es.addEventListener("paused", () => {
+      disconnect();
+      toast("Live updates paused: too many vitrine tabs are open. Close the ones you no longer need.");
+    });
     es.addEventListener("gone", () => {
       gone = true;
       disconnect();
@@ -119,5 +125,6 @@
   document.addEventListener("visibilitychange", () => (document.hidden ? disconnect() : connect()));
   window.addEventListener("pagehide", disconnect);
   window.addEventListener("pageshow", () => { if (!document.hidden) connect(); });
+  window.addEventListener("focus", connect);
   if (!document.hidden) connect();
 })();

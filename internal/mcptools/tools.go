@@ -105,7 +105,7 @@ func Register(server *mcp.Server, o Options) {
 		if err != nil {
 			return nil, fetchOut{}, err
 		}
-		return nil, fetchOut{Events: toEvents(res.Events), Cursor: res.Cursor, UnreadLeft: res.UnreadLeft, TimedOut: res.TimedOut}, nil
+		return nil, fetchOut{Events: toEvents(res.Events), Cursor: res.Cursor, UnreadLeft: res.UnreadLeft, TimedOut: res.TimedOut, Warning: res.Warning}, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
@@ -323,6 +323,7 @@ type fetchOut struct {
 	Cursor     int64   `json:"cursor" jsonschema:"pass as ack once you processed these events"`
 	UnreadLeft int     `json:"unread_left" jsonschema:"unread events not in this result, including other types"`
 	TimedOut   bool    `json:"timed_out,omitempty" jsonschema:"nothing arrived in time: call again"`
+	Warning    string  `json:"warning,omitempty" jsonschema:"pass it on to the user"`
 }
 
 type eventsOut struct {

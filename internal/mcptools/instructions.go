@@ -32,7 +32,8 @@ Rules:
   previous result as ack. It acknowledges only events you received; those a
   types filter left out stay unread. In a new session, call list_prototypes,
   then wait_for_events with ack=0: you get everything not yet acknowledged.
-- Write decisions you read from events into the repository (e.g. decisions.md).`,
+- Write decisions you read from events into the repository (e.g. decisions.md).
+- A result may carry a warning, e.g. too many open vitrine tabs: tell the user.`,
 		store.FormatDuration(ttl), baseURL, WaitCommand(goos, baseURL, authFile))
 }
 

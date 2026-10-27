@@ -130,6 +130,8 @@ vitrine injects a small script, `hub.js`. The prototype decides what is worth re
 
 `vitrine doctor` checks the platform, the state directory and the token file permissions, whether vitrine or another program uses the port, the service and how the browser is opened. Problems are marked with `!`. Please include its output in bug reports.
 
+**Many open tabs.** Browsers allow only six connections to one host over plain HTTP, and every vitrine tab showing a prototype keeps one open for live updates. Hidden tabs let go of theirs. With more than four visible vitrine tabs, the oldest pauses its live updates until you switch back to it, so pages and events always have connections left. Clicks and events still work in a paused tab. Close tabs you no longer need.
+
 ## Principles
 
 - **The repository is the source.** vitrine is a display case, not an archive. Prototypes live in git, and decisions are written back there.

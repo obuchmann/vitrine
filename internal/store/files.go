@@ -260,7 +260,7 @@ func (s *Store) loadPrototype(name string) (*prototype, error) {
 		publishedAt: m.PublishedAt, lastActivity: m.LastActivity, savedAt: m.LastActivity,
 		eventToken: m.EventToken, nextSeq: m.NextSeq, acked: m.Acked,
 		ackedAfter: map[int64]bool{}, delivered: map[int64]bool{},
-		subs: map[chan Push]bool{}, changed: make(chan struct{}),
+		subs: map[chan Push]sub{}, changed: make(chan struct{}),
 	}
 	for _, seq := range m.AckedAfter {
 		p.ackedAfter[seq] = true

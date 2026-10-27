@@ -72,6 +72,7 @@ type Limits struct {
 	MaxEvents     int           // per prototype; read events fall out first, unread ones never
 	MaxEventBytes int           // per event payload
 	MaxTotalBytes int           // all HTML plus all event payloads
+	MaxTabs       int           // open tabs with a live connection, across all prototypes
 }
 
 // DefaultLimits are the documented starting values.
@@ -83,6 +84,9 @@ func DefaultLimits() Limits {
 		MaxEvents:     10000,
 		MaxEventBytes: 64 << 10,
 		MaxTotalBytes: 200 << 20,
+		// Browsers allow six HTTP/1.1 connections per host. Four live tabs
+		// leave two for page loads and events.
+		MaxTabs: 4,
 	}
 }
 
@@ -99,7 +103,7 @@ type Event struct {
 
 // Push is sent to the open tabs and streams of a prototype.
 type Push struct {
-	Kind string `json:"kind"` // "event", "message", "version" or "gone"
+	Kind string `json:"kind"` // "event", "message", "version", "gone" or "paused"
 	Data any    `json:"data"`
 }
 
@@ -144,8 +148,13 @@ type prototype struct {
 	ackedAfter map[int64]bool // events after acked that are acknowledged one by one
 	delivered  map[int64]bool // events after acked that a fetch handed out, not yet acknowledged
 
-	subs    map[chan Push]bool // true for an open tab, false for an agent stream
-	changed chan struct{}      // closed and replaced on every new event and on removal
+	subs    map[chan Push]sub
+	changed chan struct{} // closed and replaced on every new event and on removal
+}
+
+type sub struct {
+	tab bool  // an open tab, not an agent stream
+	seq int64 // order of subscription, to pause the oldest tab
 }
 
 func (p *prototype) isAcked(seq int64) bool { return seq <= p.acked || p.ackedAfter[seq] }
@@ -213,8 +222,8 @@ func (p *prototype) unreadLocked(skip map[int64]bool) int {
 // tabs counts the open tabs.
 func (p *prototype) tabs() int {
 	n := 0
-	for _, tab := range p.subs {
-		if tab {
+	for _, sb := range p.subs {
+		if sb.tab {
 			n++
 		}
 	}
@@ -238,9 +247,14 @@ type Store struct {
 	now    func() time.Time
 	log    *slog.Logger
 
-	mu     sync.Mutex
-	protos map[string]*prototype
+	mu      sync.Mutex
+	protos  map[string]*prototype
+	lastSub int64
 }
+
+// TabsWarning is shown to agents while the tab limit is reached.
+const TabsWarning = "Many vitrine tabs are open; further tabs pause the live updates of the oldest " +
+	"(browsers allow only six connections to vitrine). Ask the user to close tabs they no longer need."
 
 // Open loads every prototype stored in o.Dir.
 func Open(o Options) (*Store, error) {
@@ -311,7 +325,7 @@ func (s *Store) Publish(in PublishInput) (Info, string, error) {
 	if exists {
 		p = *old
 	} else {
-		p = prototype{name: in.Name, subs: map[chan Push]bool{}, changed: make(chan struct{}), eventToken: newToken(),
+		p = prototype{name: in.Name, subs: map[chan Push]sub{}, changed: make(chan struct{}), eventToken: newToken(),
 			ackedAfter: map[int64]bool{}, delivered: map[int64]bool{}}
 	}
 	p.html = slices.Clone(in.HTML)
@@ -345,6 +359,12 @@ func (s *Store) Publish(in PublishInput) (Info, string, error) {
 		s.protos[in.Name] = &p
 	}
 	s.pushLocked(&p, Push{Kind: "version", Data: map[string]int{"version": p.version}})
+	if w := s.tabsWarningLocked(); w != "" {
+		if warning != "" {
+			warning += ". "
+		}
+		warning += w
+	}
 	return s.infoLocked(s.protos[in.Name]), warning, nil
 }
 
@@ -566,6 +586,7 @@ type FetchResult struct {
 	Cursor     int64   `json:"cursor"`
 	UnreadLeft int     `json:"unread_left"`
 	TimedOut   bool    `json:"timed_out,omitempty"`
+	Warning    string  `json:"warning,omitempty"`
 }
 
 // Fetch is the inbox of a prototype. ack acknowledges every event up to that
@@ -608,12 +629,12 @@ func (s *Store) Fetch(ctx context.Context, name string, types []string, ack int6
 			}
 		}
 		if len(out) > 0 {
-			res := FetchResult{Events: out, Cursor: out[len(out)-1].Seq, UnreadLeft: p.unreadLocked(returned)}
+			res := FetchResult{Events: out, Cursor: out[len(out)-1].Seq, UnreadLeft: p.unreadLocked(returned), Warning: s.tabsWarningLocked()}
 			s.mu.Unlock()
 			return res, nil
 		}
 		changed := p.changed
-		res := FetchResult{Events: []Event{}, Cursor: p.acked, UnreadLeft: p.unreadLocked(nil), TimedOut: true}
+		res := FetchResult{Events: []Event{}, Cursor: p.acked, UnreadLeft: p.unreadLocked(nil), TimedOut: true, Warning: s.tabsWarningLocked()}
 		s.mu.Unlock()
 
 		select {
@@ -655,8 +676,8 @@ func (s *Store) Message(name, text string, data json.RawMessage) (int, error) {
 	}
 	n := 0
 	push := Push{Kind: "message", Data: map[string]any{"message": text, "data": data}}
-	for ch, tab := range p.subs {
-		if !tab {
+	for ch, sb := range p.subs {
+		if !sb.tab {
 			continue
 		}
 		select {
@@ -671,6 +692,8 @@ func (s *Store) Message(name, text string, data json.RawMessage) (int, error) {
 // Subscribe streams the pushes of a prototype until cancel is called or the
 // prototype is removed (the channel is then closed). tab is true for a page
 // open in a browser and false for an agent; only tabs count as viewers.
+// Beyond Limits.MaxTabs, the oldest tab gets a "paused" push and is closed,
+// so the browser keeps connections free for page loads and events.
 func (s *Store) Subscribe(name string, tab bool) (<-chan Push, func(), error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -678,8 +701,12 @@ func (s *Store) Subscribe(name string, tab bool) (<-chan Push, func(), error) {
 	if !ok {
 		return nil, nil, ErrUnknown
 	}
+	if tab {
+		s.pauseTabsLocked(s.limits.MaxTabs - 1)
+	}
 	ch := make(chan Push, 32)
-	p.subs[ch] = tab
+	s.lastSub++
+	p.subs[ch] = sub{tab: tab, seq: s.lastSub}
 	cancel := func() {
 		s.mu.Lock()
 		defer s.mu.Unlock()
@@ -712,13 +739,52 @@ func (s *Store) removeLocked(p *prototype, reason string) {
 	for ch := range p.subs {
 		close(ch)
 	}
-	p.subs = map[chan Push]bool{}
+	p.subs = map[chan Push]sub{}
 	delete(s.protos, p.name)
 	if err := s.removeFiles(p.name); err != nil {
 		s.log.Error("removing files", "name", p.name, "err", err)
 	}
 	// Wake waiting fetches so they report the prototype as unknown.
 	notifyLocked(p)
+}
+
+// pauseTabsLocked closes the oldest tabs until at most keep are open.
+func (s *Store) pauseTabsLocked(keep int) {
+	if s.limits.MaxTabs <= 0 {
+		return
+	}
+	for s.tabsLocked() > keep {
+		var oldest chan Push
+		var owner *prototype
+		for _, p := range s.protos {
+			for ch, sb := range p.subs {
+				if sb.tab && (oldest == nil || sb.seq < owner.subs[oldest].seq) {
+					oldest, owner = ch, p
+				}
+			}
+		}
+		select {
+		case oldest <- Push{Kind: "paused", Data: map[string]string{"reason": "too many tabs"}}:
+		default:
+		}
+		delete(owner.subs, oldest)
+		close(oldest)
+	}
+}
+
+func (s *Store) tabsLocked() int {
+	n := 0
+	for _, p := range s.protos {
+		n += p.tabs()
+	}
+	return n
+}
+
+func (s *Store) tabsWarningLocked() string {
+	if s.limits.MaxTabs > 0 && s.tabsLocked() >= s.limits.MaxTabs {
+		return TabsWarning
+	}
+	return ""
 }
 
 // notifyLocked wakes every Fetch waiting on p.
