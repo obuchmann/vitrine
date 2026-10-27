@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -42,15 +43,34 @@ func (s *Store) protoDir(name string) string {
 }
 
 // writePrototype writes HTML and metadata of a new or republished prototype.
-func (s *Store) writePrototype(p *prototype) error {
+// oldHTML is the HTML of the previous version, nil for a new prototype. If the
+// metadata cannot be written, the previous HTML is put back so HTML and
+// version on disk still belong together.
+func (s *Store) writePrototype(p *prototype, oldHTML []byte) error {
 	dir := s.protoDir(p.name)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	if err := writeFileAtomic(filepath.Join(dir, htmlFile), p.html); err != nil {
+	if oldHTML == nil {
+		// Left over from a prototype that could not be loaded or removed: its
+		// events would mix with the new ones.
+		if err := os.Remove(filepath.Join(dir, eventsFile)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+	}
+	html := filepath.Join(dir, htmlFile)
+	if err := writeFileAtomic(html, p.html); err != nil {
 		return err
 	}
-	return s.writeMeta(p)
+	if err := s.writeMeta(p); err != nil {
+		if oldHTML != nil {
+			if rerr := writeFileAtomic(html, oldHTML); rerr != nil {
+				s.log.Error("restoring previous html", "name", p.name, "err", rerr)
+			}
+		}
+		return err
+	}
+	return nil
 }
 
 func (s *Store) writeMeta(p *prototype) error {
@@ -76,9 +96,19 @@ func (s *Store) appendEvent(p *prototype, ev Event) error {
 	if err != nil {
 		return err
 	}
-	f, err := os.OpenFile(filepath.Join(s.protoDir(p.name), eventsFile), os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
+	f, err := os.OpenFile(filepath.Join(s.protoDir(p.name), eventsFile), os.O_RDWR|os.O_CREATE|os.O_APPEND, 0o600)
 	if err != nil {
 		return err
+	}
+	// A crash or failed write can leave a line without its newline. Start a
+	// new line, so the event is not glued to the damaged one and lost with it.
+	torn, err := endsTorn(f)
+	if err != nil {
+		f.Close()
+		return err
+	}
+	if torn {
+		line = append([]byte{'\n'}, line...)
 	}
 	if _, err := f.Write(append(line, '\n')); err != nil {
 		f.Close()
@@ -89,6 +119,19 @@ func (s *Store) appendEvent(p *prototype, ev Event) error {
 		return err
 	}
 	return f.Close()
+}
+
+// endsTorn reports whether f is not empty and does not end with a newline.
+func endsTorn(f *os.File) (bool, error) {
+	st, err := f.Stat()
+	if err != nil || st.Size() == 0 {
+		return false, err
+	}
+	last := make([]byte, 1)
+	if _, err := f.ReadAt(last, st.Size()-1); err != nil {
+		return false, err
+	}
+	return last[0] != '\n', nil
 }
 
 // writeEvents replaces the event file with the events kept in memory.
@@ -202,7 +245,7 @@ func (s *Store) loadPrototype(name string) (*prototype, error) {
 		name: name, html: html, version: m.Version, context: m.Context,
 		publishedAt: m.PublishedAt, lastActivity: m.LastActivity, savedAt: m.LastActivity,
 		eventToken: m.EventToken, nextSeq: m.NextSeq, acked: m.Acked,
-		subs: map[chan Push]struct{}{},
+		subs: map[chan Push]struct{}{}, changed: make(chan struct{}),
 	}
 	if m.KeepFor != "" {
 		if p.keepFor, err = ParseDuration(m.KeepFor); err != nil {
@@ -224,30 +267,31 @@ func (s *Store) loadEvents(p *prototype) error {
 		return err
 	}
 	defer f.Close()
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 64<<10), s.limits.MaxEventBytes+64<<10)
-	for sc.Scan() {
-		var ev Event
-		if err := json.Unmarshal(sc.Bytes(), &ev); err != nil {
-			// A line cut off by a crash: everything before it is intact.
-			s.log.Warn("ignoring damaged event line", "name", p.name, "err", err)
-			continue
+	r := bufio.NewReader(f)
+	for {
+		line, err := r.ReadBytes('\n')
+		if len(bytes.TrimSpace(line)) > 0 {
+			var ev Event
+			if uerr := json.Unmarshal(line, &ev); uerr != nil {
+				// A line cut off by a crash: everything before it is intact.
+				s.log.Warn("ignoring damaged event line", "name", p.name, "err", uerr)
+			} else {
+				p.events = append(p.events, ev)
+				p.eventBytes += len(ev.Data)
+				p.nextSeq = max(p.nextSeq, ev.Seq)
+				if ev.At.After(p.lastActivity) {
+					p.lastActivity = ev.At
+				}
+			}
 		}
-		p.events = append(p.events, ev)
-		p.eventBytes += len(ev.Data)
-		p.nextSeq = max(p.nextSeq, ev.Seq)
-		if ev.At.After(p.lastActivity) {
-			p.lastActivity = ev.At
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return err
 		}
 	}
-	if err := sc.Err(); err != nil {
-		return err
-	}
-	if len(p.events) > s.limits.MaxEvents {
-		for _, old := range p.events[:len(p.events)-s.limits.MaxEvents] {
-			p.eventBytes -= len(old.Data)
-		}
-		p.events = p.events[len(p.events)-s.limits.MaxEvents:]
-	}
+	// Only if the limit was lowered; Emit keeps the inbox within it.
+	s.dropEventsLocked(p, len(p.events)-s.limits.MaxEvents)
 	return nil
 }

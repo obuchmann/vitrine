@@ -170,7 +170,7 @@ func run(cfg serveConfig, h http.Handler, st *store.Store, log *slog.Logger) err
 			for _, l := range lns {
 				l.Close()
 			}
-			if errors.Is(err, syscall.EADDRINUSE) {
+			if isAddrInUse(err) {
 				return fmt.Errorf("%s is in use: is vitrine already running? (%w)", a, err)
 			}
 			return err

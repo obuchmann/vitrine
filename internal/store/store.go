@@ -31,6 +31,7 @@ var (
 	ErrInvalidType  = errors.New("invalid event type: lower case letters, digits, '.', '_' or '-', at most 40 characters")
 	ErrTooLarge     = errors.New("too large")
 	ErrStoreFull    = errors.New("store full")
+	ErrInboxFull    = errors.New("inbox full")
 	ErrEmptyContent = errors.New("empty html")
 )
 
@@ -68,7 +69,7 @@ type Limits struct {
 	DefaultTTL    time.Duration // lifetime after the last activity without keep_for
 	MaxKeepFor    time.Duration // upper bound for keep_for
 	MaxHTMLBytes  int           // per prototype
-	MaxEvents     int           // per prototype; the oldest fall out first
+	MaxEvents     int           // per prototype; read events fall out first, unread ones never
 	MaxEventBytes int           // per event payload
 	MaxTotalBytes int           // all HTML plus all event payloads
 }
@@ -141,7 +142,8 @@ type prototype struct {
 	nextSeq    int64
 	acked      int64 // every event up to this seq is acknowledged
 
-	subs map[chan Push]struct{}
+	subs    map[chan Push]struct{}
+	changed chan struct{} // closed and replaced on every new event and on removal
 }
 
 func (p *prototype) bytes() int { return len(p.html) + p.eventBytes }
@@ -161,9 +163,8 @@ type Store struct {
 	now    func() time.Time
 	log    *slog.Logger
 
-	mu      sync.Mutex
-	protos  map[string]*prototype
-	changed chan struct{} // closed and replaced on every new event
+	mu     sync.Mutex
+	protos map[string]*prototype
 }
 
 // Open loads every prototype stored in o.Dir.
@@ -174,7 +175,7 @@ func Open(o Options) (*Store, error) {
 	if o.Log == nil {
 		o.Log = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
-	s := &Store{dir: o.Dir, limits: o.Limits, now: o.Now, log: o.Log, protos: map[string]*prototype{}, changed: make(chan struct{})}
+	s := &Store{dir: o.Dir, limits: o.Limits, now: o.Now, log: o.Log, protos: map[string]*prototype{}}
 	if err := s.load(); err != nil {
 		return nil, err
 	}
@@ -235,7 +236,7 @@ func (s *Store) Publish(in PublishInput) (Info, string, error) {
 	if exists {
 		p = *old
 	} else {
-		p = prototype{name: in.Name, subs: map[chan Push]struct{}{}, eventToken: newToken()}
+		p = prototype{name: in.Name, subs: map[chan Push]struct{}{}, changed: make(chan struct{}), eventToken: newToken()}
 	}
 	p.html = slices.Clone(in.HTML)
 	p.version++
@@ -251,7 +252,11 @@ func (s *Store) Publish(in PublishInput) (Info, string, error) {
 	if in.Context != nil {
 		p.context = cloneMap(in.Context)
 	}
-	if err := s.writePrototype(&p); err != nil {
+	var oldHTML []byte
+	if exists {
+		oldHTML = old.html
+	}
+	if err := s.writePrototype(&p, oldHTML); err != nil {
 		if !exists {
 			s.removeFiles(in.Name)
 		}
@@ -405,6 +410,15 @@ func (s *Store) Emit(name, typ string, data json.RawMessage, version int, auto b
 	if err := s.makeRoomLocked(len(data), name, now); err != nil {
 		return Event{}, err
 	}
+	if len(p.events) >= s.limits.MaxEvents {
+		// Free a tenth more than needed so the file is not rewritten on every event.
+		if s.dropEventsLocked(p, len(p.events)-s.limits.MaxEvents+1+s.limits.MaxEvents/10) == 0 {
+			return Event{}, ErrInboxFull
+		}
+		if err := s.writeEvents(p); err != nil {
+			s.log.Error("compacting events", "name", name, "err", err)
+		}
+	}
 	if version <= 0 {
 		version = p.version
 	}
@@ -417,24 +431,49 @@ func (s *Store) Emit(name, typ string, data json.RawMessage, version int, auto b
 	p.nextSeq = seq
 	p.events = append(p.events, ev)
 	p.eventBytes += len(ev.Data)
-	if len(p.events) > s.limits.MaxEvents {
-		// Drop a tenth more than needed so the file is not rewritten on every event.
-		keep := max(s.limits.MaxEvents-s.limits.MaxEvents/10, 1)
-		for _, old := range p.events[:len(p.events)-keep] {
-			p.eventBytes -= len(old.Data)
-		}
-		p.events = slices.Clone(p.events[len(p.events)-keep:])
-		if err := s.writeEvents(p); err != nil {
-			s.log.Error("compacting events", "name", name, "err", err)
-		}
-	}
 	// The event carries its time, so Open recovers the activity from it.
 	p.lastActivity = now
 	p.savedAt = now
 	s.pushLocked(p, Push{Kind: "event", Data: ev})
-	close(s.changed)
-	s.changed = make(chan struct{})
+	notifyLocked(p)
 	return ev, nil
+}
+
+// dropEventsLocked removes up to n events to make room in the inbox:
+// acknowledged ones first, then unread automatic views and clicks, the oldest
+// first. Unread events a prototype reported itself are never dropped.
+// It returns how many it removed.
+func (s *Store) dropEventsLocked(p *prototype, n int) int {
+	if n <= 0 {
+		return 0
+	}
+	drop := make(map[int64]bool, n)
+	for _, pass := range []func(Event) bool{
+		func(ev Event) bool { return ev.Seq <= p.acked },
+		func(ev Event) bool { return ev.Auto },
+	} {
+		for _, ev := range p.events {
+			if len(drop) == n {
+				break
+			}
+			if pass(ev) {
+				drop[ev.Seq] = true
+			}
+		}
+	}
+	if len(drop) == 0 {
+		return 0
+	}
+	kept := make([]Event, 0, len(p.events)-len(drop))
+	for _, ev := range p.events {
+		if drop[ev.Seq] {
+			p.eventBytes -= len(ev.Data)
+		} else {
+			kept = append(kept, ev)
+		}
+	}
+	p.events = kept
+	return len(drop)
 }
 
 // FetchResult is what Fetch hands out. Cursor is the seq of the last returned
@@ -484,7 +523,7 @@ func (s *Store) Fetch(ctx context.Context, name string, types []string, ack int6
 			s.mu.Unlock()
 			return res, nil
 		}
-		changed := s.changed
+		changed := p.changed
 		res := FetchResult{Events: []Event{}, Cursor: p.acked, UnreadLeft: countUnread(p.events, p.acked), TimedOut: true}
 		s.mu.Unlock()
 
@@ -576,8 +615,13 @@ func (s *Store) removeLocked(p *prototype, reason string) {
 		s.log.Error("removing files", "name", p.name, "err", err)
 	}
 	// Wake waiting fetches so they report the prototype as unknown.
-	close(s.changed)
-	s.changed = make(chan struct{})
+	notifyLocked(p)
+}
+
+// notifyLocked wakes every Fetch waiting on p.
+func notifyLocked(p *prototype) {
+	close(p.changed)
+	p.changed = make(chan struct{})
 }
 
 // touchLocked records activity. It is written to disk at most once a minute;

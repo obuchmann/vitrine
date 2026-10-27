@@ -274,6 +274,30 @@ func TestEventsAreBounded(t *testing.T) {
 	}
 }
 
+func TestUnreadEventsAreNeverDropped(t *testing.T) {
+	c := &clock{t: time.Now()}
+	lim := DefaultLimits()
+	lim.MaxEvents = 3
+	s := openStore(t, t.TempDir(), lim, c)
+	publish(t, s, "a/b")
+	choice := emit(t, s, "a/b", "choice", false)
+	for range 5 {
+		emit(t, s, "a/b", "click", true) // automatic clicks make room for each other
+	}
+	emit(t, s, "a/b", "comment", false)
+	evs, _ := s.Events("a/b", nil, 0)
+	if len(evs) != 3 || evs[0].Seq != choice.Seq {
+		t.Fatalf("unread choice dropped: %+v", evs)
+	}
+	emit(t, s, "a/b", "comment", false)
+	if _, err := s.Emit("a/b", "comment", nil, 0, false); !errors.Is(err, ErrInboxFull) {
+		t.Fatalf("full inbox of unread events: %v, want ErrInboxFull", err)
+	}
+	res := fetchNow(t, s, "a/b", 0)
+	fetchNow(t, s, "a/b", res.Cursor)
+	emit(t, s, "a/b", "comment", false) // acknowledged events make room
+}
+
 func TestSubscribersGetPushesAndClose(t *testing.T) {
 	s, _ := newStore(t)
 	publish(t, s, "a/b")
@@ -309,7 +333,7 @@ func TestDurations(t *testing.T) {
 			t.Errorf("%s: %v %v", in, got, err)
 		}
 	}
-	for _, bad := range []string{"", "x", "-1d", "1w"} {
+	for _, bad := range []string{"", "x", "-1d", "1w", "200000d"} {
 		if _, err := ParseDuration(bad); err == nil {
 			t.Errorf("%q accepted", bad)
 		}

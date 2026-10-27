@@ -2,6 +2,7 @@ package store
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -14,6 +15,9 @@ func ParseDuration(s string) (time.Duration, error) {
 		n, err := strconv.Atoi(days)
 		if err != nil || n < 0 {
 			return 0, fmt.Errorf("invalid duration %q: use e.g. 10d or 36h", s)
+		}
+		if int64(n) > int64(math.MaxInt64/(24*time.Hour)) {
+			return 0, fmt.Errorf("invalid duration %q: too long", s)
 		}
 		return time.Duration(n) * 24 * time.Hour, nil
 	}
