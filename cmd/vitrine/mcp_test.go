@@ -42,6 +42,11 @@ func TestConfigureMCP(t *testing.T) {
 	if _, err := configureMCP("https://vitrine.example", dir, ""); err == nil || !strings.Contains(err.Error(), "VITRINE_TOKEN") {
 		t.Fatalf("remote without token: %v", err)
 	}
+	// A token from the environment still starts the daemon in the state directory.
+	cfg, err = configureMCP("http://127.0.0.1:8720", dir, "secret")
+	if err != nil || !cfg.local || cfg.token != "secret" || cfg.authFile != "" || cfg.stateDir != dir {
+		t.Fatalf("local with VITRINE_TOKEN: %+v %v", cfg, err)
+	}
 	cfg, err = configureMCP("https://vitrine.example", dir, "secret")
 	if err != nil || cfg.local || cfg.token != "secret" || cfg.authFile != "" {
 		t.Fatalf("remote: %+v %v", cfg, err)
