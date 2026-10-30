@@ -239,12 +239,13 @@ func TestStreamForHubGetsMessagesAndVersions(t *testing.T) {
 	}
 	e.upload("a/b", nil)
 	var got []string
-	for lines.Scan() && len(got) < 3 {
+	for lines.Scan() && len(got) < 5 {
 		if l := lines.Text(); strings.HasPrefix(l, "event: ") {
 			got = append(got, strings.TrimPrefix(l, "event: "))
 		}
 	}
-	if strings.Join(got, ",") != "version,message,version" {
+	// On connect the hub gets the version, the agent's presence and the threads.
+	if strings.Join(got, ",") != "version,agent,threads,message,version" {
 		t.Fatalf("stream kinds %v", got)
 	}
 }

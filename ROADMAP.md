@@ -13,6 +13,12 @@ This roadmap shows direction, not promises. Once issues exist, each item will li
 - [x] Release archives, `install.sh` and `install.ps1`, `go install`
 - [x] Documented and tested with Claude Code
 
+## v0.2: feedback in place
+
+- [x] Comments on marked elements, with answers from the agent in the page ([ADR 0005](docs/adr/0005-comments-on-elements.md))
+- [x] `guide` tool for how-tos that only some sessions need
+- [x] Tested with Claude Code in a real session: comments, replies, status, pointing and closing threads
+
 ## Later
 
 - Tested with opencode, GitHub Copilot (VS Code) and oh my pi

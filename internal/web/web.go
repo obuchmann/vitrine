@@ -22,6 +22,7 @@ import (
 	"log/slog"
 	"mime"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -32,6 +33,9 @@ import (
 
 //go:embed hub.js
 var hubJS []byte
+
+//go:embed comments.js
+var commentsJS []byte
 
 //go:embed overview.html
 var overviewHTML string
@@ -77,6 +81,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /favicon.ico", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	mux.HandleFunc("GET /api/health", s.handleHealth)
 	mux.HandleFunc("GET /_hub/hub.js", s.handleHubJS)
+	mux.HandleFunc("GET /_hub/comments.js", s.handleCommentsJS)
 	mux.HandleFunc("GET /p/{repo}/{name}", s.handleProtoRedirect)
 	mux.HandleFunc("GET /p/{repo}/{name}/{$}", s.handleProto)
 	// A page with its event token, or an agent.
@@ -89,6 +94,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/p/{repo}/{name}", s.agent(s.handleDelete))
 	mux.HandleFunc("POST /api/p/{repo}/{name}/extend", s.agent(s.handleExtend))
 	mux.HandleFunc("POST /api/p/{repo}/{name}/message", s.agent(s.handleMessage))
+	mux.HandleFunc("POST /api/p/{repo}/{name}/reply", s.agent(s.handleReply))
+	mux.HandleFunc("POST /api/p/{repo}/{name}/status", s.agent(s.handleStatus))
+	mux.HandleFunc("POST /api/p/{repo}/{name}/point", s.agent(s.handlePoint))
 	mux.HandleFunc("GET /api/events/{repo}/{name}", s.agent(s.handleListEvents))
 	mux.HandleFunc("GET /api/events/next", s.agent(s.handleNext))
 	return s.checkHost(mux)
@@ -159,7 +167,9 @@ func (s *Server) writeErr(w http.ResponseWriter, err error) {
 		writeJSON(w, http.StatusInsufficientStorage, apiError{"store_full", "vitrine's storage limit is reached. Delete prototypes you no longer need, or fetch and acknowledge their unread events."})
 	case errors.Is(err, store.ErrInboxFull):
 		writeJSON(w, http.StatusTooManyRequests, apiError{"inbox_full", "The inbox of this prototype is full of unread events. The agent has to fetch and acknowledge them first."})
-	case errors.Is(err, store.ErrInvalidName), errors.Is(err, store.ErrInvalidType), errors.Is(err, store.ErrEmptyContent):
+	case errors.Is(err, store.ErrInvalidName), errors.Is(err, store.ErrInvalidType), errors.Is(err, store.ErrEmptyContent),
+		errors.Is(err, store.ErrReservedType), errors.Is(err, store.ErrInvalidState), errors.Is(err, store.ErrUnknownThread),
+		errors.Is(err, store.ErrNoTarget), errors.Is(err, store.ErrNoThread), errors.Is(err, store.ErrEmptyText):
 		writeJSON(w, http.StatusBadRequest, apiError{err.Error(), ""})
 	default:
 		s.Log.Error("request failed", "err", err)
@@ -318,6 +328,70 @@ func (s *Server) handleMessage(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, MessageResult{DeliveredTo: n})
 }
 
+// ReplyResult identifies a stored reply.
+type ReplyResult struct {
+	ID     string `json:"id"`
+	Thread string `json:"thread"`
+}
+
+func (s *Server) handleReply(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, int64(s.Store.Limits().MaxEventBytes)+4<<10)
+	var in store.ReplyInput
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		badRequest(w, "invalid reply: "+err.Error(), `{"thread":"t1","text":"Done: the step is in.","state":"done"}`)
+		return
+	}
+	ev, err := s.Store.Reply(pathName(r), in)
+	if err != nil {
+		s.writeErr(w, err)
+		return
+	}
+	var d struct{ Thread string }
+	json.Unmarshal(ev.Data, &d)
+	writeJSON(w, http.StatusOK, ReplyResult{ID: ev.ID, Thread: d.Thread})
+}
+
+// StatusInput is what the agent says it is doing.
+type StatusInput struct {
+	Text string `json:"text"`
+}
+
+func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
+	var in StatusInput
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		badRequest(w, "invalid status: "+err.Error(), `{"text":"changing the flow …"}`)
+		return
+	}
+	n, err := s.Store.Status(pathName(r), in.Text)
+	if err != nil {
+		s.writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, MessageResult{DeliveredTo: n})
+}
+
+// PointInput points the open tabs at an element.
+type PointInput struct {
+	Target string `json:"target"`
+	Text   string `json:"text,omitempty"`
+}
+
+func (s *Server) handlePoint(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
+	var in PointInput
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		badRequest(w, "invalid point: "+err.Error(), `{"target":"flow","text":"This step is new."}`)
+		return
+	}
+	n, err := s.Store.Point(pathName(r), in.Target, in.Text)
+	if err != nil {
+		s.writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, MessageResult{DeliveredTo: n})
+}
+
 func (s *Server) handleProtoRedirect(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, r.URL.Path+"/", http.StatusMovedPermanently)
 }
@@ -329,7 +403,13 @@ func (s *Server) handleProtoRedirect(w http.ResponseWriter, r *http.Request) {
 // start of the page is scanned, so a <head> in a comment or script later on
 // does not count.
 func hubPos(html []byte) int {
-	pos := 0
+	pos, _ := scanStart(html)
+	return pos
+}
+
+// scanStart returns hubPos and the <html> start tag, if the page has one
+// before that position.
+func scanStart(html []byte) (pos int, htmlTag []byte) {
 	if bytes.HasPrefix(html, []byte("\xef\xbb\xbf")) {
 		pos = 3
 	}
@@ -343,20 +423,23 @@ func hubPos(html []byte) int {
 		case bytes.HasPrefix(rest, []byte("<!--")):
 			end := bytes.Index(rest[4:], []byte("-->"))
 			if end < 0 {
-				return pos
+				return pos, htmlTag
 			}
 			pos = i + 4 + end + 3
 		case hasTagPrefix(rest, "<!doctype"), hasTagPrefix(rest, "<html"), hasTagPrefix(rest, "<head"):
 			end := tagEnd(rest)
 			if end < 0 {
-				return pos
+				return pos, htmlTag
+			}
+			if hasTagPrefix(rest, "<html") {
+				htmlTag = rest[:end]
 			}
 			pos = i + end
 			if hasTagPrefix(rest, "<head") {
-				return pos
+				return pos, htmlTag
 			}
 		default:
-			return pos
+			return pos, htmlTag
 		}
 	}
 }
@@ -389,7 +472,19 @@ func tagEnd(b []byte) int {
 	return -1
 }
 
-// handleProto serves the HTML with hub.js injected at hubPos.
+// hasCommentsAttr reports whether an <html> start tag carries data-comments,
+// ignoring attribute values such as title=" data-comments".
+func hasCommentsAttr(tag []byte) bool {
+	return commentsAttrRE.Match(quotedRE.ReplaceAll(tag, []byte(`""`)))
+}
+
+var (
+	commentsAttrRE = regexp.MustCompile(`(?i)\sdata-comments(\s*=|[\s/>])`)
+	quotedRE       = regexp.MustCompile(`"[^"]*"|'[^']*'`)
+)
+
+// handleProto serves the HTML with hub.js injected at hubPos, and
+// comments.js too if <html> carries data-comments.
 func (s *Server) handleProto(w http.ResponseWriter, r *http.Request) {
 	name := pathName(r)
 	page, err := s.Store.Page(name)
@@ -403,14 +498,23 @@ func (s *Server) handleProto(w http.ResponseWriter, r *http.Request) {
 	}
 	tag := fmt.Sprintf(`<script src="/_hub/hub.js" data-name="%s" data-version="%d" data-token="%s"></script>`,
 		template.HTMLEscapeString(name), page.Version, page.EventToken)
+	pos, htmlTag := scanStart(page.HTML)
+	if hasCommentsAttr(htmlTag) {
+		tag += `<script src="/_hub/comments.js" defer></script>`
+	}
 	var out bytes.Buffer
-	pos := hubPos(page.HTML)
 	out.Write(page.HTML[:pos])
 	out.WriteString(tag)
 	out.Write(page.HTML[pos:])
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Write(out.Bytes())
+}
+
+func (s *Server) handleCommentsJS(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Write(commentsJS)
 }
 
 func (s *Server) handleHubJS(w http.ResponseWriter, _ *http.Request) {
@@ -543,8 +647,9 @@ func (s *Server) handleNext(w http.ResponseWriter, r *http.Request) {
 
 // handleStream is a server-sent event stream. hub.js (hub=1, with the event
 // token in the query because EventSource cannot set headers) gets messages,
-// new versions and removal. Agents, e.g. a Claude Code Monitor, get the
-// events, optionally filtered by types.
+// new versions, removal and the comment threads of its own prototype. Agents,
+// e.g. a Claude Code Monitor, get the events, optionally filtered by types,
+// and count as listening while connected.
 func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	name := q.Get("name")
@@ -559,6 +664,11 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer cancel()
+	if !isHub {
+		if done := s.Store.Listen(name); done != nil {
+			defer done(false)
+		}
+	}
 	types := splitTypes(q.Get("types"))
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -572,8 +682,16 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	if isHub {
 		// hub.js disconnects while its tab is hidden; on reconnect it learns
 		// whether a new version was published meanwhile.
+		// The threads and the agent's presence come along, so a reloaded or
+		// re-shown tab is up to date (docs/adr/0005-comments-on-elements.md).
 		if info, err := s.Store.Get(name); err == nil {
 			fmt.Fprintf(w, "event: version\ndata: {\"version\":%d}\n\n", info.Version)
+			agent, _ := json.Marshal(info.Agent)
+			fmt.Fprintf(w, "event: agent\ndata: %s\n\n", agent)
+		}
+		if evs, err := s.Store.Threads(name); err == nil {
+			data, _ := json.Marshal(evs)
+			fmt.Fprintf(w, "event: threads\ndata: %s\n\n", data)
 		}
 	}
 	flusher.Flush()

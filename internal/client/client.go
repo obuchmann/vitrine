@@ -128,6 +128,30 @@ func (c *Client) Message(ctx context.Context, name, text string, data json.RawMe
 	return out.DeliveredTo, err
 }
 
+// Reply answers a comment thread, or starts one with only a target.
+func (c *Client) Reply(ctx context.Context, name string, in store.ReplyInput) (web.ReplyResult, error) {
+	body, _ := json.Marshal(in)
+	var out web.ReplyResult
+	err := c.do(ctx, "POST", "/api/p/"+name+"/reply", nil, "application/json", body, &out)
+	return out, err
+}
+
+// Status tells the open tabs what the agent is doing; empty text clears it.
+func (c *Client) Status(ctx context.Context, name, text string) (int, error) {
+	body, _ := json.Marshal(web.StatusInput{Text: text})
+	var out web.MessageResult
+	err := c.do(ctx, "POST", "/api/p/"+name+"/status", nil, "application/json", body, &out)
+	return out.DeliveredTo, err
+}
+
+// Point scrolls the open tabs to an element and highlights it.
+func (c *Client) Point(ctx context.Context, name, target, text string) (int, error) {
+	body, _ := json.Marshal(web.PointInput{Target: target, Text: text})
+	var out web.MessageResult
+	err := c.do(ctx, "POST", "/api/p/"+name+"/point", nil, "application/json", body, &out)
+	return out.DeliveredTo, err
+}
+
 // Events returns every stored event after since, read or not.
 func (c *Client) Events(ctx context.Context, name string, types []string, since int64) ([]store.Event, error) {
 	q := url.Values{"since": {strconv.FormatInt(since, 10)}}

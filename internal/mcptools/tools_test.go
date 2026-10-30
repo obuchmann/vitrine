@@ -126,7 +126,7 @@ func TestTools(t *testing.T) {
 		names = append(names, tool.Name)
 	}
 	for _, want := range []string{"publish_prototype", "extend_prototype", "list_prototypes", "get_prototype",
-		"wait_for_events", "list_events", "send_to_prototype", "delete_prototype"} {
+		"wait_for_events", "list_events", "send_to_prototype", "delete_prototype", "guide", "reply", "set_status", "point_to"} {
 		if !slices.Contains(names, want) {
 			t.Errorf("tool %s missing in %v", want, names)
 		}
@@ -134,6 +134,46 @@ func TestTools(t *testing.T) {
 	instr := e.cs.InitializeResult().Instructions
 	if !strings.Contains(instr, `curl -s -H "@/state/auth"`) || strings.Contains(instr, token) {
 		t.Errorf("instructions must name the token file, not the token:\n%s", instr)
+	}
+}
+
+func TestCommentTools(t *testing.T) {
+	e := newEnv(t, nil)
+	if !strings.Contains(e.cs.InitializeResult().Instructions, "guide comments") {
+		t.Error("instructions do not point to guide comments")
+	}
+	res, err := e.cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "guide", Arguments: map[string]any{"topic": "comments"}})
+	if err != nil || res.IsError || !strings.Contains(res.Content[0].(*mcp.TextContent).Text, "data-c=") {
+		t.Fatalf("guide comments: %v %+v", err, res)
+	}
+	res, _ = e.cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "guide", Arguments: map[string]any{}})
+	if text := res.Content[0].(*mcp.TextContent).Text; !strings.Contains(text, "- comments:") {
+		t.Fatalf("guide without topic: %s", text)
+	}
+
+	e.write("prototypes/doc/index.html", `<!doctype html><html data-comments><head></head><body><section data-c="flow">x</section>`)
+	e.mustCall("publish_prototype", map[string]any{"path": "prototypes/doc/index.html"})
+	if _, err := e.st.Emit("my-app/doc", "comment", json.RawMessage(`{"thread":"t1","target":"flow","text":"?"}`), 0, false); err != nil {
+		t.Fatal(err)
+	}
+	got := e.mustCall("wait_for_events", map[string]any{"name": "my-app/doc", "types": []string{"comment", "resolve"}})
+	out := e.mustCall("reply", map[string]any{"name": "my-app/doc", "thread": "t1", "text": "Done.", "state": "done"})
+	if out["thread"] != "t1" || out["id"] == "" {
+		t.Fatalf("reply: %v", out)
+	}
+	if _, errText := e.call("reply", map[string]any{"name": "my-app/doc", "thread": "t1", "text": "x", "state": "closed"}); !strings.Contains(errText, "invalid state") {
+		t.Fatalf("invalid state: %q", errText)
+	}
+	if out := e.mustCall("set_status", map[string]any{"name": "my-app/doc", "text": "changing"}); out["delivered_to"].(float64) != 0 {
+		t.Fatalf("set_status: %v", out)
+	}
+	if _, errText := e.call("point_to", map[string]any{"name": "my-app/doc"}); !strings.Contains(errText, "target") {
+		t.Fatalf("point_to without target: %q", errText)
+	}
+	// The reply is stored but does not come back to the agent.
+	next := e.mustCall("wait_for_events", map[string]any{"name": "my-app/doc", "ack": got["cursor"], "timeout_s": 1})
+	if evs := next["events"].([]any); len(evs) != 0 {
+		t.Fatalf("after reply: %v", next)
 	}
 }
 

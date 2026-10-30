@@ -21,7 +21,7 @@ Events end up in an agent's context, so whoever can write into an inbox can inje
   - macOS: `~/Library/Application Support/vitrine/auth`
 - **What the token covers.** It is required for every agent operation: publish, read, acknowledge, extend and delete, as well as MCP over HTTP. It is accepted only as `Authorization: Bearer`, never from cookies.
 - **Agents never see it.** `vitrine mcp` reads it itself. For background waiting, agents use `curl -H @<auth file> …` (`curl.exe` in PowerShell), and the file holds the full header line. The MCP instructions give the exact path for the platform.
-- **Event token per prototype.** It is embedded in the served page. It permits only `POST /api/events/<this prototype>` with a JSON body. It stays stable across versions so that open tabs keep working.
+- **Event token per prototype.** It is embedded in the served page. It permits only `POST /api/events/<this prototype>` with a JSON body. It stays stable across versions so that open tabs keep working. [ADR 0005](0005-comments-on-elements.md) extends it: the hub stream of its own prototype also carries that prototype's comment threads.
 - **Second line of defence.** Every API request must carry `X-Vitrine: 1`, and the `Host` header must be `localhost`, `127.0.0.1` or `[::1]` with the configured port. A cross-origin request carrying `X-Vitrine` triggers a CORS preflight, and vitrine never approves one.
 - **No CORS.** vitrine never sends `Access-Control-Allow-*` headers.
 - **Non-loopback binds.** vitrine refuses to start on a non-loopback address without an explicitly configured token.

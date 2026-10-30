@@ -109,6 +109,8 @@ On WSL, the service needs systemd (`[boot] systemd=true` in `/etc/wsl.conf`). Wi
 | `list_events` | Every stored event, read or not. |
 | `send_to_prototype` | Show a message in every tab that shows the prototype right now. |
 | `extend_prototype`, `delete_prototype` | Keep a prototype longer than 3 days without activity, or remove it. |
+| `reply`, `set_status`, `point_to` | Answer a comment on an element, say what the agent is doing, or point the open tabs at an element. See [Comments on elements](#comments-on-elements). |
+| `guide` | A short how-to for one topic, e.g. `comments`, so the instructions every session gets stay short. |
 
 To keep working while people click, an agent can wait in the background with curl. The token file holds the headers, so the token is never on the command line. vitrine tells the agent the exact command for its platform:
 
@@ -124,6 +126,24 @@ vitrine injects a small script, `hub.js`. The prototype decides what is worth re
 <html data-track="view,click">  <!-- optional automatic events -->
 <button onclick="hub.emit('choice', { variant: 'B' })">I'll take B</button>
 ```
+
+### Comments on elements
+
+With `<html data-comments>`, vitrine also injects `comments.js`. Every element with `data-c="<id>"` gets a bookmark at its edge. Tapping it opens the threads below the element: people comment on that element, and the agent answers right there.
+
+```html
+<html data-comments>
+<section data-c="flow" data-c-label="Flow">…</section>
+<div class="variant" data-c="variant-b">…</div>
+```
+
+- `data-c` is a stable id. Keep it across versions, so threads stay attached. Put it on containers (`section`, `div`, `figure`, `li`), not on `img`, `svg`, `table` or `input`.
+- Threads of side-by-side elements open below the whole row. Threads of ids that disappeared are listed at the end of the page.
+- A badge in the bottom left corner shows whether an agent is listening or reading, or what it said with `set_status`. An element with `data-c-status` takes the badge instead.
+- A new version reloads at the same place, and open threads stay open.
+- The UI text is English. A prototype in another language sets its own texts as JSON: `<html lang="de" data-comments='{"send":"…","reply":"…"}'>`. `guide comments` lists the keys.
+
+The agent gets `comment {thread, target, label, text, screen}` and `resolve {thread, target, label, open_question}` events. It answers with `reply` (`answered`, `question` or `done`). Replies are stored with the prototype, so a reload shows them again. They never come back to the agent as unread events. Pages cannot send events of type `reply`. Design: [ADR 0005](docs/adr/0005-comments-on-elements.md).
 
 ## Troubleshooting
 
