@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Comments on elements ([ADR 0005](docs/adr/0005-comments-on-elements.md)):
+  - `<html data-comments>` adds `comments.js`. Every element with `data-c="<id>"` gets a bookmark with threads below it.
+  - The page reports `comment` and `resolve` events. The UI text is English, and a prototype can set its own texts as JSON in the attribute.
+  - MCP tools `reply`, `set_status` and `point_to`, with the HTTP routes `POST /api/p/<repo>/<name>/reply`, `/status` and `/point`.
+  - Replies are stored as events of type `reply`, acknowledged at once. Fetches never return them, and they never count as unread.
+  - The page shows whether an agent is listening or reading. `get_prototype` and `list_prototypes` report it as `agent`.
+  - The hub stream sends the threads of its prototype on connect, so a reloaded or re-shown tab is up to date.
+- MCP tool `guide`: a short how-to per topic, starting with `comments`. The instructions point to it in one line.
+
+### Changed
+
+- Pages cannot send events of type `reply` any more. vitrine answers with `400` and an explanation.
+
 ## [0.1.0] - 2026-10-27
 
 First release: vitrine on your own machine, on Linux, Windows (including WSL2) and macOS.

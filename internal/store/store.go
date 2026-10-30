@@ -103,7 +103,7 @@ type Event struct {
 
 // Push is sent to the open tabs and streams of a prototype.
 type Push struct {
-	Kind string `json:"kind"` // "event", "message", "version", "gone" or "paused"
+	Kind string `json:"kind"` // "event", "message", "version", "gone", "paused", "thread", "point" or "agent"
 	Data any    `json:"data"`
 }
 
@@ -119,6 +119,7 @@ type Info struct {
 	Unread       int               `json:"unread" jsonschema:"unacknowledged events the prototype reported itself; automatic view, click and input events are not counted"`
 	Events       int               `json:"events"`
 	Viewers      int               `json:"viewers"`
+	Agent        Agent             `json:"agent" jsonschema:"whether an agent listens, as the page shows it"`
 	Context      map[string]string `json:"context,omitempty"`
 }
 
@@ -150,6 +151,11 @@ type prototype struct {
 
 	subs    map[chan Push]sub
 	changed chan struct{} // closed and replaced on every new event and on removal
+
+	// Presence, in memory only (docs/adr/0005-comments-on-elements.md).
+	listeners int    // fetches waiting and agent streams open right now
+	reading   bool   // the last fetch handed out events, no fetch since
+	working   string // what the agent says it is doing, until it listens again
 }
 
 type sub struct {
@@ -493,18 +499,27 @@ func (s *Store) Extend(name string, keepFor time.Duration) (Info, string, error)
 
 // Emit records an event of a prototype. version is the version the page
 // showed; 0 means the current one. The event is on disk before Emit returns.
+// The type "reply" is reserved for agent replies (Reply).
 func (s *Store) Emit(name, typ string, data json.RawMessage, version int, auto bool) (Event, error) {
 	if !typeRE.MatchString(typ) {
 		return Event{}, ErrInvalidType
 	}
-	if len(data) > s.limits.MaxEventBytes {
-		return Event{}, fmt.Errorf("%w: event data %d bytes, at most %d", ErrTooLarge, len(data), s.limits.MaxEventBytes)
+	if typ == ReplyType {
+		return Event{}, ErrReservedType
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	p, ok := s.protos[name]
 	if !ok {
 		return Event{}, ErrUnknown
+	}
+	return s.emitLocked(p, typ, data, version, auto)
+}
+
+func (s *Store) emitLocked(p *prototype, typ string, data json.RawMessage, version int, auto bool) (Event, error) {
+	name := p.name
+	if len(data) > s.limits.MaxEventBytes {
+		return Event{}, fmt.Errorf("%w: event data %d bytes, at most %d", ErrTooLarge, len(data), s.limits.MaxEventBytes)
 	}
 	now := s.now()
 	if err := s.makeRoomLocked(len(data), name, now); err != nil {
@@ -534,7 +549,13 @@ func (s *Store) Emit(name, typ string, data json.RawMessage, version int, auto b
 	// The event carries its time, so Open recovers the activity from it.
 	p.lastActivity = now
 	p.savedAt = now
-	s.pushLocked(p, Push{Kind: "event", Data: ev})
+	// Agent streams get what pages report, not the agent's own replies.
+	if typ != ReplyType {
+		s.pushLocked(p, Push{Kind: "event", Data: ev})
+	}
+	if isThreadEvent(ev) {
+		s.pushLocked(p, Push{Kind: "thread", Data: ev})
+	}
 	notifyLocked(p)
 	return ev, nil
 }
@@ -600,7 +621,10 @@ type FetchResult struct {
 // same events again: delivered at least once, never lost. Events a types
 // filter left out are not acknowledged by the cursor; they stay unread until
 // a fetch returns them.
-func (s *Store) Fetch(ctx context.Context, name string, types []string, ack int64, wait time.Duration) (FetchResult, error) {
+func (s *Store) Fetch(ctx context.Context, name string, types []string, ack int64, wait time.Duration) (res FetchResult, err error) {
+	if done := s.Listen(name); done != nil {
+		defer func() { done(len(res.Events) > 0) }()
+	}
 	deadline := time.NewTimer(wait)
 	defer deadline.Stop()
 	for {
@@ -675,8 +699,12 @@ func (s *Store) Message(name, text string, data json.RawMessage) (int, error) {
 	if !ok {
 		return 0, ErrUnknown
 	}
+	return s.pushTabsLocked(p, Push{Kind: "message", Data: map[string]any{"message": text, "data": data}}), nil
+}
+
+// pushTabsLocked delivers to the open tabs only and returns how many got it.
+func (s *Store) pushTabsLocked(p *prototype, push Push) int {
 	n := 0
-	push := Push{Kind: "message", Data: map[string]any{"message": text, "data": data}}
 	for ch, sb := range p.subs {
 		if !sb.tab {
 			continue
@@ -687,7 +715,7 @@ func (s *Store) Message(name, text string, data json.RawMessage) (int, error) {
 		default:
 		}
 	}
-	return n, nil
+	return n
 }
 
 // Subscribe streams the pushes of a prototype until cancel is called or the
@@ -827,7 +855,8 @@ func (s *Store) infoLocked(p *prototype) Info {
 	info := Info{
 		Name: p.name, Version: p.version, Bytes: p.bytes(),
 		PublishedAt: p.publishedAt.UTC(), LastActivity: p.lastActivity.UTC(), ExpiresAt: s.expiresLocked(p).UTC(),
-		Unread: p.unreadLocked(nil), Events: len(p.events), Viewers: p.tabs(), Context: cloneMap(p.context),
+		Unread: p.unreadLocked(nil), Events: len(p.events), Viewers: p.tabs(), Agent: agentLocked(p),
+		Context: cloneMap(p.context),
 	}
 	if p.keepFor > 0 {
 		info.KeepFor = FormatDuration(p.keepFor)

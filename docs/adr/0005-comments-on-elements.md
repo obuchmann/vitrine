@@ -1,6 +1,6 @@
 # 0005: Comments on marked elements
 
-- Status: proposed
+- Status: accepted
 - Date: 2026-10-30
 
 ## Context
@@ -50,7 +50,7 @@ When `hub.js` connects to `GET /api/events/stream?hub=1&token=…`, vitrine alre
 
 ### 3. Reserved event type: `reply`
 
-A page cannot send events of type `reply`: vitrine refuses them with `invalid_type`. Otherwise any page with the event token could fake an agent answer. `comment` and `resolve` remain open for pages, because they are what pages send. A `comment` event without `thread` and `target` is not a thread and does not appear in the snapshot. Pages from v0.1 that already send `comment` with their own data keep working.
+A page cannot send events of type `reply`: vitrine refuses them with `400` and an explanation. Otherwise any page with the event token could fake an agent answer. `comment` and `resolve` remain open for pages, because they are what pages send. A `comment` event without `thread` and `target` is not a thread and does not appear in the snapshot. Pages from v0.1 that already send `comment` with their own data keep working.
 
 ### 4. Agent manual: a `guide` tool
 
@@ -68,7 +68,8 @@ A page cannot send events of type `reply`: vitrine refuses them with `invalid_ty
 
 - `comments.js` runs in the browser only and has no platform-specific code.
 - The layout works from phone width up, because remote mode can be used from a phone.
-- The UI text is in English. Agents write replies in the language of the person.
+- The UI text in the repository is English only, with no translation files. Texts in a prototype depend on its users, so a prototype can set its own as a JSON object in the attribute: `<html lang="de" data-comments='{"send":"…","listening":"…"}'>`. Unknown keys are ignored. `guide comments` lists the keys.
+- Agents write replies in the language of the person.
 - vitrine renders all comment and reply text as text, never as HTML.
 - vitrine does not log comment or reply text.
 

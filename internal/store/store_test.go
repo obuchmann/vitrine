@@ -467,7 +467,12 @@ func TestOldestTabIsPausedBeyondTheLimit(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer cancel()
-	if p, open := <-tabs[0]; !open || p.Kind != "paused" {
+	// The fetch above told the tab that an agent listened.
+	p, open := <-tabs[0]
+	for open && p.Kind == "agent" {
+		p, open = <-tabs[0]
+	}
+	if !open || p.Kind != "paused" {
 		t.Fatalf("oldest tab got %+v open=%v, want paused", p, open)
 	}
 	if _, open := <-tabs[0]; open {

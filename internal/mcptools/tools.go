@@ -141,6 +141,43 @@ func Register(server *mcp.Server, o Options) {
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
+		Name:        "guide",
+		Description: "Short how-to for one topic: " + strings.Join(guideTopics(), ", ") + ". Empty topic lists them.",
+	}, func(_ context.Context, _ *mcp.CallToolRequest, in guideIn) (*mcp.CallToolResult, any, error) {
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: guide(in.Topic)}}}, nil, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "reply",
+		Description: "Answer a comment thread on an element (state answered, question or done); see guide comments.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in replyIn) (*mcp.CallToolResult, web.ReplyResult, error) {
+		out, err := c.Reply(ctx, in.Name, store.ReplyInput{Thread: in.Thread, Target: in.Target, Text: in.Text, State: in.State})
+		return nil, out, err
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "set_status",
+		Description: "Tell the people in a prototype what you are doing; clears when you listen again, empty text clears now. See guide comments.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in statusIn) (*mcp.CallToolResult, sendOut, error) {
+		n, err := c.Status(ctx, in.Name, in.Text)
+		if err != nil {
+			return nil, sendOut{}, err
+		}
+		return nil, sendOut{DeliveredTo: n}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "point_to",
+		Description: "Scroll open tabs to an element (its data-c id) and highlight it with a short note; see guide comments.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in pointIn) (*mcp.CallToolResult, sendOut, error) {
+		n, err := c.Point(ctx, in.Name, in.Target, in.Text)
+		if err != nil {
+			return nil, sendOut{}, err
+		}
+		return nil, sendOut{DeliveredTo: n}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
 		Name:        "delete_prototype",
 		Description: "Remove a prototype and its events at once.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in nameIn) (*mcp.CallToolResult, deleteOut, error) {
@@ -286,6 +323,29 @@ type sendIn struct {
 	Name    string `json:"name" jsonschema:"<repo>/<name>"`
 	Message string `json:"message" jsonschema:"short text shown in the prototype"`
 	Data    any    `json:"data,omitempty" jsonschema:"optional data for hub.on(\"message\") handlers"`
+}
+
+type guideIn struct {
+	Topic string `json:"topic,omitempty" jsonschema:"e.g. comments; empty lists the topics"`
+}
+
+type replyIn struct {
+	Name   string `json:"name" jsonschema:"<repo>/<name>"`
+	Thread string `json:"thread,omitempty" jsonschema:"thread id from the comment event"`
+	Target string `json:"target,omitempty" jsonschema:"data-c id; only to start a new thread without a comment"`
+	Text   string `json:"text" jsonschema:"your answer, short, in the person's language"`
+	State  string `json:"state" jsonschema:"answered, question (you wait for an answer) or done (closes the thread)"`
+}
+
+type statusIn struct {
+	Name string `json:"name" jsonschema:"<repo>/<name>"`
+	Text string `json:"text" jsonschema:"what you are doing; empty clears"`
+}
+
+type pointIn struct {
+	Name   string `json:"name" jsonschema:"<repo>/<name>"`
+	Target string `json:"target" jsonschema:"data-c id of the element"`
+	Text   string `json:"text,omitempty" jsonschema:"short note shown at the element"`
 }
 
 type protoOut struct {

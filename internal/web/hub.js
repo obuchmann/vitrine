@@ -8,6 +8,10 @@
 //                           hub.js reloads the page
 //   hub.toast(text)         show a short note
 //
+// Comments on marked elements (<html data-comments>, data-c="<id>") come from
+// comments.js, which vitrine adds next to this script. It listens with
+// hub.on("threads" | "thread" | "point" | "agent", fn).
+//
 // Automatic tracking is opt-in on the <html> element:
 //   <html data-track="view,click,input">
 (() => {
@@ -17,6 +21,10 @@
   const version = Number(me.dataset.version);
   const token = me.dataset.token;
   const handlers = {};
+  // The latest snapshot of these kinds is replayed to handlers registered
+  // later, e.g. by comments.js, which loads after the stream connected.
+  const sticky = { threads: true, agent: true };
+  const last = {};
 
   function post(type, data, auto) {
     const body = JSON.stringify({ type, data: data === undefined ? null : data, version, auto: !!auto });
@@ -52,6 +60,7 @@
   }
 
   function fire(kind, payload) {
+    if (sticky[kind]) last[kind] = payload;
     const list = handlers[kind] || [];
     list.forEach((fn) => { try { fn(payload); } catch (e) { console.error(e); } });
     return list.length > 0;
@@ -61,7 +70,10 @@
     name,
     version,
     emit: (type, data) => post(type, data, false),
-    on(kind, fn) { (handlers[kind] = handlers[kind] || []).push(fn); },
+    on(kind, fn) {
+      (handlers[kind] = handlers[kind] || []).push(fn);
+      if (kind in last) { try { fn(last[kind]); } catch (e) { console.error(e); } }
+    },
     toast,
   };
 
@@ -108,6 +120,9 @@
       latest = d.version;
       if (!fire("version", d)) location.reload();
     });
+    for (const kind of ["threads", "thread", "point", "agent"]) {
+      es.addEventListener(kind, (e) => fire(kind, JSON.parse(e.data)));
+    }
     es.addEventListener("paused", () => {
       disconnect();
       toast("Live updates paused: too many vitrine tabs are open. Close the ones you no longer need.");
