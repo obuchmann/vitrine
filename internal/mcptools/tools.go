@@ -198,7 +198,7 @@ type tools struct {
 
 func (t *tools) publish(ctx context.Context, _ *mcp.CallToolRequest, in publishIn) (*mcp.CallToolResult, publishOut, error) {
 	if in.Path == "" {
-		return nil, publishOut{}, errors.New("path is required: the HTML file to publish, relative to your working directory")
+		return nil, publishOut{}, errors.New("path is required: the HTML file to publish, best as an absolute path")
 	}
 	path := in.Path
 	if !filepath.IsAbs(path) {
@@ -286,7 +286,7 @@ func keepProgress(ctx context.Context, req *mcp.CallToolRequest, token any) func
 }
 
 type publishIn struct {
-	Path    string            `json:"path" jsonschema:"the HTML file, relative to your working directory; one self-contained document with CSS, JS and images inline"`
+	Path    string            `json:"path" jsonschema:"the HTML file; an absolute path always works, a relative one is resolved against the directory the session started in; one self-contained document with CSS, JS and images inline"`
 	Name    string            `json:"name,omitempty" jsonschema:"<repo>/<name>, or just <name>; repo defaults to the git repository that contains the file, name to the file's folder (or file name without .html)"`
 	KeepFor string            `json:"keep_for,omitempty" jsonschema:"minimum lifetime, e.g. 10d or 36h, at most 30d"`
 	Context map[string]string `json:"context,omitempty" jsonschema:"where this comes from, e.g. branch, task; shown to later sessions"`

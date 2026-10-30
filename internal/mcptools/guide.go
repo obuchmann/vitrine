@@ -16,7 +16,8 @@ Markup (vitrine adds the comment UI; you write no JS for it):
   <div class="variant" data-c="variant-b">...</div>
 - data-c: a stable id per commentable element. Keep it across versions so threads stay attached.
   Put it on containers (section, div, figure, article, li), not on img, svg, table or input: wrap those.
-  Nested and side-by-side elements work.
+  Nested and side-by-side elements work. On narrow screens the bookmark sits inside the element and
+  takes 36px of padding on its right; let rows shrink (e.g. min-width: 0 on flex inputs).
 - data-c-label: optional name shown in the UI and sent to you; default is the first heading.
 - Optional: an element with data-c-status shows the agent status; default is a badge bottom left.
 - The UI text is English. For another language, write the texts you need as JSON in the attribute:

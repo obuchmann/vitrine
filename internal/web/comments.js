@@ -234,6 +234,30 @@
     document.querySelectorAll(".vc-open,.vc-point").forEach((n) => n.classList.remove("vc-open", "vc-point"));
   }
 
+  // A bookmark inside an element covers its right edge, e.g. a quantity or a
+  // button. The element gets that much more padding while it carries one;
+  // the original inline padding comes back otherwise.
+  const RESERVE = 36;
+  const pads = new WeakMap();
+  function reserve(el, on) {
+    if (!pads.has(el)) pads.set(el, { inline: el.style.paddingRight, base: parseFloat(getComputedStyle(el).paddingRight) || 0 });
+    const p = pads.get(el);
+    el.style.paddingRight = on ? `${p.base + RESERVE}px` : p.inline;
+  }
+  // A marked element nested in another marked one with (nearly) the same right
+  // edge carries its bookmark inside, so the two bookmarks do not overlap.
+  function sharesEdge(el, r) {
+    const outer = el.parentElement?.closest("[data-c]");
+    return !!outer && usable(outer) && outer.getBoundingClientRect().right - r.right < RESERVE + 4;
+  }
+  // The fixed status badge must not cover the end of the page, e.g. a note
+  // from point_to on the last element.
+  let bodyPad = null;
+  function reserveBottom(badge) {
+    if (bodyPad === null) bodyPad = { inline: document.body.style.paddingBottom, base: parseFloat(getComputedStyle(document.body).paddingBottom) || 0 };
+    document.body.style.paddingBottom = badge ? `${bodyPad.base + badge.offsetHeight + 24}px` : bodyPad.inline;
+  }
+
   function render() {
     const focus = document.activeElement?.dataset?.vcKey;
     const caret = focus ? document.activeElement.selectionStart : 0;
@@ -243,7 +267,8 @@
       const id = el.dataset.c;
       if (getComputedStyle(el).position === "static") el.style.position = "relative";
       const r = el.getBoundingClientRect();
-      const inside = narrow(el) || r.right + 44 > vw - 4;
+      const inside = narrow(el) || r.right + 44 > vw - 4 || sharesEdge(el, r);
+      reserve(el, inside);
       const n = threadsOf(id).filter(live).length;
       const open = openTarget === id;
       el.insertAdjacentHTML("beforeend", `<button type="button" class="vc vc-band ${inside ? "vc-inside" : ""} ${targetState(id)} ${fresh.has(id) ? "vc-new" : ""}" data-vc-band="${esc(id)}" aria-expanded="${open}" aria-label="${esc(TEXT.comments)} ${esc(labelOf(el))}">${n || ICON.pen}</button>`);
@@ -262,8 +287,9 @@
     if (orphans.length) {
       document.body.insertAdjacentHTML("beforeend", `<section class="vc vc-orphans"><h2>${esc(TEXT.orphans)}</h2>${orphans.map((t) => `<p><b>${esc(t.label)}</b></p>${threadHTML(t)}`).join("")}</section>`);
     }
-    const slot = document.querySelector("[data-c-status]") || document.body;
-    slot.insertAdjacentHTML("beforeend", statusHTML());
+    const slot = document.querySelector("[data-c-status]");
+    (slot || document.body).insertAdjacentHTML("beforeend", statusHTML());
+    reserveBottom(slot ? null : document.querySelector(".vc-status"));
     if (focus) {
       const ta = document.querySelector(`textarea[data-vc-key="${CSS.escape(focus)}"]`);
       if (ta) { ta.focus({ preventScroll: true }); ta.setSelectionRange(caret, caret); }
