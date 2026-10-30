@@ -10,3 +10,4 @@ Vision and principles are in the [README](../../README.md). Planned work is in t
 | [0002](0002-authentication.md) | Authentication on localhost | accepted |
 | [0003](0003-storage.md) | File storage in the state directory | accepted |
 | [0004](0004-platforms-and-distribution.md) | Platform support and distribution | accepted |
+| [0005](0005-comments-on-elements.md) | Comments on marked elements | proposed |
