@@ -3,7 +3,6 @@ package store
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"slices"
 	"strings"
 )
@@ -19,6 +18,7 @@ var (
 	ErrInvalidState  = errors.New("invalid state: answered, question or done")
 	ErrUnknownThread = errors.New("unknown thread: no comment with this thread id; pass target to start a new thread")
 	ErrNoTarget      = errors.New("target is required: the data-c id of the element")
+	ErrNoThread      = errors.New("thread or target is required: pass thread to answer a comment, or target to start a thread")
 	ErrEmptyText     = errors.New("empty text")
 )
 
@@ -133,9 +133,13 @@ func (s *Store) Reply(name string, in ReplyInput) (Event, error) {
 		}
 		in.Target = target
 	case in.Target != "":
-		in.Thread = fmt.Sprintf("a%d", p.nextSeq+1)
+		// Random, so a page cannot claim the id first with a comment on
+		// another element and divert the agent's later replies there.
+		for in.Thread == "" || threadTargetLocked(p, in.Thread) != "" {
+			in.Thread = "a" + newToken()[:12]
+		}
 	default:
-		return Event{}, errors.New("pass thread to answer a comment, or target to start a thread")
+		return Event{}, ErrNoThread
 	}
 	data, _ := json.Marshal(in)
 	ev, err := s.emitLocked(p, ReplyType, data, 0, false)

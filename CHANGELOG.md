@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Replies are stored as events of type `reply`, acknowledged at once. Fetches never return them, and they never count as unread.
   - The page shows whether an agent is listening or reading. `get_prototype` and `list_prototypes` report it as `agent`.
   - The hub stream sends the threads of its prototype on connect, so a reloaded or re-shown tab is up to date.
+- `hub.on("reload", fn)` runs right before hub.js reloads the page for a new version. A page with its own `version` handler is still never reloaded.
 - MCP tool `guide`: a short how-to per topic, starting with `comments`. The instructions point to it in one line.
 
 ### Changed

@@ -112,8 +112,20 @@
     return false;
   }
 
+  // Drafts and the scroll position survive a reload in sessionStorage. If the
+  // browser blocks it, comments work without.
+  let storageWarned = false;
+  function storage(fn, fallback) {
+    try { return fn(sessionStorage); } catch (e) {
+      if (!storageWarned) { storageWarned = true; console.warn("vitrine: sessionStorage unavailable, drafts are not kept", e); }
+      return fallback;
+    }
+  }
+  const load = (k) => storage((st) => JSON.parse(st.getItem(`${KEY}:${k}`) || "null"), null);
+  const save = (k, v) => storage((st) => v === null ? st.removeItem(`${KEY}:${k}`) : st.setItem(`${KEY}:${k}`, JSON.stringify(v)));
+
   const threads = new Map();
-  const drafts = JSON.parse(sessionStorage.getItem(`${KEY}:drafts`) || "{}");
+  const drafts = load("drafts") || {};
   let openTarget = null;
   let note = null; // {target, text} from point_to
   let agent = { listening: false };
@@ -177,7 +189,7 @@
       const extra = it.pending ? `, ${TEXT.sending}` : it.failed ? `, ${TEXT.notSent}` : "";
       return `<div class="${cls}"><small>${esc(who)} ${time(it.at)}${esc(extra)}</small>${esc(it.text)}</div>`;
     }).join("");
-    return `<div class="vc-thread"><span class="vc-state vc-s-${t.state}">${LABEL[t.state] || esc(t.state)}</span>${msgs}${live(t) ? formHTML(`t:${t.id}`, TEXT.reply, t.id) : ""}</div>`;
+    return `<div class="vc-thread"><span class="vc-state vc-s-${t.state}">${esc(LABEL[t.state] || t.state)}</span>${msgs}${live(t) ? formHTML(`t:${t.id}`, TEXT.reply, t.id) : ""}</div>`;
   }
   function formHTML(key, label, threadId) {
     return `<form class="vc-form" data-vc-key="${esc(key)}"${threadId ? ` data-vc-thread="${esc(threadId)}"` : ""}>
@@ -250,8 +262,8 @@
     if (orphans.length) {
       document.body.insertAdjacentHTML("beforeend", `<section class="vc vc-orphans"><h2>${esc(TEXT.orphans)}</h2>${orphans.map((t) => `<p><b>${esc(t.label)}</b></p>${threadHTML(t)}`).join("")}</section>`);
     }
-    const slot = document.querySelector("[data-c-status]");
-    if (slot) slot.insertAdjacentHTML("beforeend", statusHTML()); else document.body.insertAdjacentHTML("beforeend", statusHTML());
+    const slot = document.querySelector("[data-c-status]") || document.body;
+    slot.insertAdjacentHTML("beforeend", statusHTML());
     if (focus) {
       const ta = document.querySelector(`textarea[data-vc-key="${CSS.escape(focus)}"]`);
       if (ta) { ta.focus({ preventScroll: true }); ta.setSelectionRange(caret, caret); }
@@ -268,7 +280,7 @@
   // ---- Input ----
   document.addEventListener("input", (e) => {
     const k = e.target.dataset?.vcKey;
-    if (k) { drafts[k] = e.target.value; sessionStorage.setItem(`${KEY}:drafts`, JSON.stringify(drafts)); }
+    if (k) { drafts[k] = e.target.value; save("drafts", drafts); }
   });
   document.addEventListener("submit", (e) => {
     const f = e.target.closest?.("form.vc-form");
@@ -277,7 +289,7 @@
     const key = f.dataset.vcKey, text = (drafts[key] || "").trim();
     if (!text) return;
     delete drafts[key];
-    sessionStorage.setItem(`${KEY}:drafts`, JSON.stringify(drafts));
+    save("drafts", drafts);
     const thread = f.dataset.vcThread;
     send(thread ? threads.get(thread).target : key.slice(4), text, thread);
   });
@@ -325,24 +337,33 @@
     render();
   });
   hub.on("point", (d) => { note = { target: d.target, text: d.text || TEXT.lookHere }; render(); scrollTo_(d.target); });
+  // Presence changes often. Only the badge is replaced, so the open panel and
+  // a comment being typed (IME, autocorrect on phones) stay untouched.
+  function renderStatus() {
+    const old = document.querySelector(".vc-status");
+    if (!old) return render();
+    old.insertAdjacentHTML("afterend", statusHTML());
+    old.remove();
+  }
   hub.on("agent", (a) => {
     if (agent.listening && !a.listening) offlineSince = Date.now();
     agent = a;
-    render();
+    renderStatus();
     // Show "nobody listens" only after a pause: agents re-listen right away.
-    if (!a.listening) setTimeout(render, 8500);
+    if (!a.listening) setTimeout(renderStatus, 8500);
   });
 
-  // A new version reloads at the same spot with the same threads open.
-  hub.on("version", () => {
+  // When hub.js reloads for a new version (the page has no "version"
+  // handler of its own), the page comes back at the same spot with the same
+  // threads open.
+  hub.on("reload", () => {
     const top = marked().find((e) => e.getBoundingClientRect().bottom > 60);
-    sessionStorage.setItem(`${KEY}:pos`, JSON.stringify({ id: top?.dataset.c, y: top?.getBoundingClientRect().top, open: openTarget, from: hub.version }));
-    location.reload();
+    save("pos", { id: top?.dataset.c, y: top?.getBoundingClientRect().top, open: openTarget, from: hub.version });
   });
   function restore() {
-    const s = JSON.parse(sessionStorage.getItem(`${KEY}:pos`) || "null");
+    const s = load("pos");
     if (!s) return;
-    sessionStorage.removeItem(`${KEY}:pos`);
+    save("pos", null);
     openTarget = s.open;
     render();
     const el = s.id && byId(s.id);

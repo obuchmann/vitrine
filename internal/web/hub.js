@@ -10,7 +10,8 @@
 //
 // Comments on marked elements (<html data-comments>, data-c="<id>") come from
 // comments.js, which vitrine adds next to this script. It listens with
-// hub.on("threads" | "thread" | "point" | "agent", fn).
+// hub.on("threads" | "thread" | "point" | "agent", fn), and with
+// hub.on("reload", fn) right before hub.js reloads for a new version.
 //
 // Automatic tracking is opt-in on the <html> element:
 //   <html data-track="view,click,input">
@@ -118,7 +119,10 @@
       const d = JSON.parse(e.data);
       if (d.version <= latest) return;
       latest = d.version;
-      if (!fire("version", d)) location.reload();
+      if (!fire("version", d)) {
+        fire("reload", d);
+        location.reload();
+      }
     });
     for (const kind of ["threads", "thread", "point", "agent"]) {
       es.addEventListener(kind, (e) => fire(kind, JSON.parse(e.data)));

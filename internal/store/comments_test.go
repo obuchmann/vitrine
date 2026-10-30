@@ -3,6 +3,7 @@ package store
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 )
@@ -83,8 +84,8 @@ func TestReplyValidates(t *testing.T) {
 			t.Errorf("%+v: got %v, want %v", c.in, err, c.want)
 		}
 	}
-	if _, err := s.Reply("a/b", ReplyInput{Text: "x", State: "done"}); err == nil {
-		t.Error("reply without thread and target accepted")
+	if _, err := s.Reply("a/b", ReplyInput{Text: "x", State: "done"}); !errors.Is(err, ErrNoThread) {
+		t.Errorf("reply without thread and target: %v", err)
 	}
 	if _, err := s.Reply("x/y", ReplyInput{Thread: "t1", Text: "x", State: "done"}); !errors.Is(err, ErrUnknown) {
 		t.Errorf("unknown prototype: %v", err)
@@ -216,5 +217,27 @@ func TestPresence(t *testing.T) {
 	}
 	if s.Listen("x/y") != nil {
 		t.Fatal("listening to an unknown prototype")
+	}
+}
+
+func TestAgentThreadIdsCannotBeClaimedByAPage(t *testing.T) {
+	s, _ := newStore(t)
+	publish(t, s, "a/b")
+	// A page guesses the next ids and claims them for another element.
+	for i := 1; i <= 5; i++ {
+		comment(t, s, "a/b", fmt.Sprintf("a%d", i), "elsewhere", "claimed")
+	}
+	seen := map[string]bool{}
+	for i := 0; i < 20; i++ {
+		ev, err := s.Reply("a/b", ReplyInput{Target: "flow", Text: "About this?", State: "question"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var d ReplyInput
+		json.Unmarshal(ev.Data, &d)
+		if seen[d.Thread] || threadTargetLocked(s.protos["a/b"], d.Thread) != "flow" {
+			t.Fatalf("thread %q reused or attached elsewhere", d.Thread)
+		}
+		seen[d.Thread] = true
 	}
 }

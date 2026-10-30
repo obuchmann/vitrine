@@ -169,7 +169,7 @@ func (s *Server) writeErr(w http.ResponseWriter, err error) {
 		writeJSON(w, http.StatusTooManyRequests, apiError{"inbox_full", "The inbox of this prototype is full of unread events. The agent has to fetch and acknowledge them first."})
 	case errors.Is(err, store.ErrInvalidName), errors.Is(err, store.ErrInvalidType), errors.Is(err, store.ErrEmptyContent),
 		errors.Is(err, store.ErrReservedType), errors.Is(err, store.ErrInvalidState), errors.Is(err, store.ErrUnknownThread),
-		errors.Is(err, store.ErrNoTarget), errors.Is(err, store.ErrEmptyText):
+		errors.Is(err, store.ErrNoTarget), errors.Is(err, store.ErrNoThread), errors.Is(err, store.ErrEmptyText):
 		writeJSON(w, http.StatusBadRequest, apiError{err.Error(), ""})
 	default:
 		s.Log.Error("request failed", "err", err)

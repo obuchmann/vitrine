@@ -145,3 +145,25 @@ func TestThreadsReachTheHubStream(t *testing.T) {
 		t.Fatalf("unknown thread: %d %s", code, body)
 	}
 }
+
+func TestReplyNeedsThreadOrTarget(t *testing.T) {
+	e := newEnv(t)
+	e.upload("a/b", nil)
+	code, body, _ := e.do("POST", "/api/p/a/b/reply", "application/json", strings.NewReader(`{"text":"x","state":"done"}`), agentHeaders)
+	if code != 400 || !strings.Contains(body, "thread or target is required") {
+		t.Fatalf("reply without thread and target: %d %s", code, body)
+	}
+}
+
+func TestThreadsNeedTheirOwnPrototypesToken(t *testing.T) {
+	e := newEnv(t)
+	e.upload("a/one", nil)
+	e.upload("a/two", nil)
+	if code := e.emitAsPage("a/two", e.pageToken("a/two"), `{"type":"comment","data":{"thread":"t1","target":"flow","text":"secret"}}`); code != 200 {
+		t.Fatalf("comment: %d", code)
+	}
+	code, body, _ := e.do("GET", "/api/events/stream?name=a/two&hub=1&token="+e.pageToken("a/one"), "", nil, nil)
+	if code != 401 || strings.Contains(body, "secret") {
+		t.Fatalf("token of a/one read the threads of a/two: %d %s", code, body)
+	}
+}
