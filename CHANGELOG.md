@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-30
+
+Feedback in place: people comment on elements of a prototype, and the agent answers there.
+
 ### Added
 
 - Comments on elements ([ADR 0005](docs/adr/0005-comments-on-elements.md)):
@@ -22,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Pages cannot send events of type `reply` any more. vitrine answers with `400` and an explanation.
+- The `publish_prototype` description says that an absolute `path` always works. A relative one is resolved against the directory the session started in ([#18](https://github.com/obuchmann/vitrine/issues/18)).
 
 ## [0.1.0] - 2026-10-27
 
@@ -49,5 +54,6 @@ First release: vitrine on your own machine, on Linux, Windows (including WSL2) a
 - Releases for Linux, macOS and Windows on amd64 and arm64, with SBOMs and checksums signed by cosign.
 - `install.sh` (Linux, macOS, WSL) and `install.ps1` (Windows) install without root or administrator rights and verify the checksum. `go install github.com/obuchmann/vitrine/cmd/vitrine@latest` works too.
 
-[Unreleased]: https://github.com/obuchmann/vitrine/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/obuchmann/vitrine/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/obuchmann/vitrine/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/obuchmann/vitrine/releases/tag/v0.1.0

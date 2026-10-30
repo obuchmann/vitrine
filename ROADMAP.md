@@ -17,6 +17,7 @@ This roadmap shows direction, not promises. Once issues exist, each item will li
 
 - [x] Comments on marked elements, with answers from the agent in the page ([ADR 0005](docs/adr/0005-comments-on-elements.md))
 - [x] `guide` tool for how-tos that only some sessions need
+- [x] Tested with Claude Code in a real session: comments, replies, status, pointing and closing threads
 
 ## Later
 
